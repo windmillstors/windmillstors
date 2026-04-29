@@ -1,0 +1,1237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Windmill Cafe — Branch App</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<style>
+  :root {
+    --bg:#faf7f2;--surface:#fff;--surface2:#f5f0e8;--surface3:#ede5d8;
+    --border:#e8dfd0;--border2:#d4c9b4;
+    --text:#2c2015;--text2:#7a6a55;--text3:#b0a090;
+    --accent:#2c5f8a;--accent2:#4a85b5;--accent-bg:#eef4fb;
+    --green:#3a7d56;--green-bg:#edf7f1;
+    --amber:#b07d2c;--amber-bg:#fdf6e3;
+    --red:#9b3a3a;--red-bg:#fdf0f0;
+    --main:#8b5e3c;--main-bg:#fdf0e6;
+    --shadow:0 2px 12px rgba(44,32,21,.08);
+    --radius:12px;--radius-sm:8px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
+
+  /* HEADER */
+  .header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 2rem;display:flex;align-items:center;justify-content:space-between;height:64px;position:sticky;top:0;z-index:100;box-shadow:var(--shadow);}
+  .logo{display:flex;align-items:center;gap:10px;}
+  .logo-icon{width:36px;height:36px;background:var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;}
+  .logo-text{font-family:'Playfair Display',serif;font-size:20px;font-weight:600;color:var(--text);}
+  .logo-sub{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-weight:500;}
+  .header-right{display:flex;align-items:center;gap:10px;}
+  .branch-selector{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;color:var(--text);cursor:pointer;outline:none;min-width:180px;}
+  .branch-selector:focus{border-color:var(--accent);}
+  .live-indicator{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--green);font-weight:500;}
+  .live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 1.5s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+  .notif-btn{position:relative;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);width:38px;height:38px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;}
+  .notif-badge{position:absolute;top:4px;right:4px;background:var(--red);color:white;font-size:9px;font-weight:700;min-width:16px;height:16px;border-radius:8px;display:none;align-items:center;justify-content:center;padding:0 3px;}
+
+  /* LAYOUT */
+  .container{max-width:1400px;margin:0 auto;padding:1.5rem 2rem;}
+  .page-layout{display:grid;grid-template-columns:370px 1fr;gap:1.5rem;align-items:start;}
+  .left-sticky{position:sticky;top:80px;}
+  .right-sticky{position:sticky;top:80px;max-height:calc(100vh - 96px);overflow-y:auto;}
+
+  /* STATS */
+  .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:1.5rem;}
+  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1.25rem;}
+  .stat-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;font-weight:500;margin-bottom:6px;}
+  .stat-value{font-size:28px;font-weight:300;color:var(--text);line-height:1;}
+  .stat-sub{font-size:12px;color:var(--text2);margin-top:4px;}
+  .stat-card.highlight{border-color:var(--accent2);}
+  .stat-card.highlight .stat-value{color:var(--accent);}
+
+  /* CARD */
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;margin-bottom:1.5rem;}
+  .card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;padding-bottom:.75rem;border-bottom:1px solid var(--border);}
+  .card-title{font-family:'Playfair Display',serif;font-size:16px;font-weight:500;color:var(--text);}
+
+  /* ITEM BUILDER */
+  .item-builder{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px;}
+  .form-group{margin-bottom:10px;}
+  .form-label{font-size:11px;font-weight:500;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;display:block;margin-bottom:5px;}
+  .form-input,.form-select{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;font-family:'DM Sans',sans-serif;font-size:14px;color:var(--text);outline:none;transition:border-color .15s;}
+  .form-input:focus,.form-select:focus{border-color:var(--accent);background:white;}
+  .form-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .add-item-btn{width:100%;padding:9px;background:var(--accent-bg);color:var(--accent);border:1px dashed var(--accent2);border-radius:var(--radius-sm);font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:6px;}
+  .add-item-btn:hover{background:var(--accent);color:white;border-style:solid;}
+
+  /* SUB-ITEM CHIPS */
+  .sub-chips-section{margin-bottom:10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;}
+  .sub-chips-label{font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.7px;margin-bottom:7px;}
+  .sub-chips-wrap{display:flex;flex-wrap:wrap;gap:5px;}
+  .sub-chip{background:var(--surface2);border:1px solid var(--border2);border-radius:20px;font-size:12px;color:var(--text2);padding:4px 11px;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .12s;}
+  .sub-chip:hover{background:var(--accent-bg);border-color:var(--accent2);color:var(--accent);}
+  .sub-chip.active{background:var(--accent);border-color:var(--accent);color:white;}
+  .no-subs-msg{font-size:12px;color:var(--text3);font-style:italic;}
+
+  /* CART */
+  .cart-section{margin-bottom:12px;}
+  .cart-header{font-size:12px;font-weight:500;color:var(--text2);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;}
+  .cart-item{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 12px;margin-bottom:6px;}
+  .cart-item-num{width:22px;height:22px;border-radius:50%;background:var(--accent-bg);color:var(--accent);font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .cart-item-name{font-size:14px;font-weight:500;color:var(--text);flex:1;}
+  .cart-item-qty{font-size:12px;color:var(--text2);white-space:nowrap;}
+  .cart-item-type{font-size:11px;background:var(--surface2);color:var(--text2);padding:2px 7px;border-radius:8px;}
+  .priority-high-tag{font-size:10px;background:var(--red-bg);color:var(--red);border:1px solid #f4c5c5;padding:2px 6px;border-radius:8px;font-weight:500;}
+  .cart-actions{display:flex;gap:4px;flex-shrink:0;}
+  .cart-edit{width:26px;height:26px;border-radius:6px;background:var(--accent-bg);color:var(--accent);border:1px solid #c5d9ef;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;transition:all .12s;}
+  .cart-edit:hover{background:var(--accent);color:white;}
+  .cart-remove{width:26px;height:26px;border-radius:6px;background:var(--red-bg);color:var(--red);border:1px solid #f4c5c5;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;transition:all .12s;}
+  .cart-remove:hover{background:var(--red);color:white;}
+  .cart-empty{text-align:center;padding:1.5rem;color:var(--text3);font-size:13px;border:1px dashed var(--border2);border-radius:var(--radius-sm);}
+  .cart-empty .e-icon{font-size:24px;margin-bottom:6px;}
+
+  /* SEND BUTTON */
+  .send-all-btn{width:100%;padding:12px;background:var(--accent);color:white;border:none;border-radius:var(--radius-sm);font-family:'DM Sans',sans-serif;font-size:15px;font-weight:500;cursor:pointer;transition:background .15s,transform .1s;display:flex;align-items:center;justify-content:center;gap:8px;}
+  .send-all-btn:hover{background:#1e4a6e;}
+  .send-all-btn:active{transform:scale(.98);}
+  .send-all-btn:disabled{background:var(--text3);cursor:not-allowed;}
+  .item-count-badge{background:rgba(255,255,255,.25);padding:2px 8px;border-radius:10px;font-size:13px;}
+  .order-note-row{margin-bottom:12px;}
+
+  /* FILTER TABS */
+  .filter-tabs{display:flex;gap:6px;flex-wrap:wrap;}
+  .filter-tab{font-size:12px;font-weight:500;padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface2);color:var(--text2);cursor:pointer;transition:all .15s;font-family:'DM Sans',sans-serif;}
+  .filter-tab.active{background:var(--accent);color:white;border-color:var(--accent);}
+  .filter-tab .cnt{display:inline-block;padding:1px 5px;border-radius:8px;font-size:10px;margin-left:4px;background:rgba(255,255,255,.25);}
+  .filter-tab:not(.active) .cnt{background:var(--border);color:var(--text3);}
+
+  /* BADGES */
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:20px;text-transform:uppercase;letter-spacing:.4px;}
+  .badge::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.7;}
+  .badge.pending{background:var(--amber-bg);color:var(--amber);}
+  .badge.processing{background:var(--accent-bg);color:var(--accent);}
+  .badge.arranged{background:var(--main-bg);color:var(--main);}
+  .badge.sent{background:var(--green-bg);color:var(--green);}
+  .badge.received{background:#e8f5e8;color:#2e6b3e;}
+  .badge.cancelled{background:#f5f0f0;color:var(--text3);}
+
+  /* BRANCH HEADER */
+  .branch-header{display:flex;align-items:center;gap:12px;margin-bottom:1.5rem;padding:1rem 1.25rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);border-left:4px solid var(--accent2);}
+  .branch-avatar{width:48px;height:48px;border-radius:50%;background:var(--accent-bg);display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;}
+  .empty-state{text-align:center;padding:3rem 1rem;color:var(--text3);}
+  .empty-state .icon{font-size:36px;margin-bottom:8px;}
+
+  /* EDIT MODAL */
+  .modal-overlay{position:fixed;inset:0;background:rgba(44,32,21,.4);backdrop-filter:blur(4px);z-index:500;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .2s;}
+  .modal-overlay.open{opacity:1;pointer-events:all;}
+  .modal{background:var(--surface);border-radius:var(--radius);padding:1.5rem;width:460px;max-width:92vw;box-shadow:0 20px 60px rgba(44,32,21,.2);transform:translateY(12px);transition:transform .2s;max-height:90vh;overflow-y:auto;}
+  .modal-overlay.open .modal{transform:translateY(0);}
+  .modal-title{font-family:'Playfair Display',serif;font-size:17px;font-weight:600;margin-bottom:1rem;padding-bottom:.75rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+  .modal-close{background:none;border:none;cursor:pointer;color:var(--text3);font-size:18px;line-height:1;}
+  .modal-footer{display:flex;gap:8px;margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border);}
+  .btn-save{flex:1;padding:9px;background:var(--accent);color:white;border:none;border-radius:var(--radius-sm);font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;cursor:pointer;}
+  .btn-cancel{padding:9px 16px;background:var(--surface2);color:var(--text2);border:1px solid var(--border);border-radius:var(--radius-sm);font-family:'DM Sans',sans-serif;font-size:14px;cursor:pointer;}
+
+  /* Modal sub-chips */
+  .modal-sub-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;}
+  .modal-sub-chip{background:var(--surface2);border:1px solid var(--border2);border-radius:20px;font-size:11px;color:var(--text2);padding:3px 10px;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .12s;}
+  .modal-sub-chip:hover{background:var(--accent-bg);border-color:var(--accent2);color:var(--accent);}
+  .modal-sub-chip.active{background:var(--accent);border-color:var(--accent);color:white;}
+
+  /* NAME SUGGESTION DROPDOWN */
+  .name-input-wrap{position:relative;}
+  .name-suggestions{position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius-sm);box-shadow:0 8px 28px rgba(44,32,21,.16);z-index:200;max-height:220px;overflow-y:auto;display:none;}
+  .name-suggestions.open{display:block;}
+  .name-sugg-item{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;cursor:pointer;transition:background .1s;border-bottom:1px solid rgba(232,223,208,.5);}
+  .name-sugg-item:last-child{border-bottom:none;}
+  .name-sugg-item:hover,.name-sugg-item.highlighted{background:var(--accent-bg);}
+  .name-sugg-text{font-size:13px;font-weight:500;color:var(--text);}
+  .name-sugg-cat{font-size:11px;color:var(--text3);background:var(--surface2);padding:2px 8px;border-radius:8px;white-space:nowrap;}
+  .name-sugg-empty{padding:10px 12px;font-size:12px;color:var(--text3);font-style:italic;text-align:center;}
+
+  /* TOAST */
+  .toast-container{position:fixed;top:80px;right:20px;display:flex;flex-direction:column;gap:8px;z-index:999;max-width:300px;}
+  .toast{background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:var(--radius-sm);padding:12px 14px;font-size:13px;box-shadow:0 4px 16px rgba(44,32,21,.12);animation:toastIn .3s ease;}
+  .toast.success{border-left-color:var(--green);}
+  .toast.update{border-left-color:var(--main);}
+  @keyframes toastIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+  .toast-title{font-weight:500;color:var(--text);margin-bottom:2px;}
+  .toast-msg{color:var(--text2);font-size:12px;}
+
+  /* LOGIN MODAL */
+  .login-overlay{position:fixed;inset:0;background:rgba(44,32,21,.55);backdrop-filter:blur(6px);z-index:600;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .25s;}
+  .login-overlay.open{opacity:1;pointer-events:all;}
+  .login-box{background:var(--surface);border-radius:16px;padding:2rem 2rem 1.75rem;width:380px;max-width:92vw;box-shadow:0 24px 64px rgba(44,32,21,.22);transform:translateY(16px);transition:transform .25s;}
+  .login-overlay.open .login-box{transform:translateY(0);}
+  .login-branch-icon{width:56px;height:56px;border-radius:50%;background:var(--accent-bg);border:2px solid var(--accent2);display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto 1rem;}
+  .login-title{font-family:'Playfair Display',serif;font-size:20px;font-weight:600;text-align:center;color:var(--text);margin-bottom:4px;}
+  .login-sub{font-size:13px;color:var(--text2);text-align:center;margin-bottom:1.5rem;}
+  .login-field{position:relative;margin-bottom:1rem;}
+  .login-input{width:100%;background:var(--surface2);border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:11px 42px 11px 14px;font-family:'DM Sans',sans-serif;font-size:15px;color:var(--text);outline:none;transition:border-color .15s;letter-spacing:2px;}
+  .login-input:focus{border-color:var(--accent);background:white;}
+  .login-toggle{position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px;line-height:1;padding:2px;}
+  .login-toggle:hover{color:var(--text2);}
+  .login-btn{width:100%;padding:12px;background:var(--accent);color:white;border:none;border-radius:var(--radius-sm);font-family:'DM Sans',sans-serif;font-size:15px;font-weight:500;cursor:pointer;transition:background .15s;margin-top:4px;}
+  .login-btn:hover{background:#1e4a6e;}
+  .login-error{font-size:12px;color:var(--red);background:var(--red-bg);border:1px solid #f4c5c5;border-radius:6px;padding:7px 12px;margin-bottom:10px;display:none;text-align:center;}
+  .login-cancel{display:block;text-align:center;margin-top:12px;font-size:13px;color:var(--text3);cursor:pointer;background:none;border:none;font-family:'DM Sans',sans-serif;width:100%;}
+  .login-cancel:hover{color:var(--text2);}
+  .logout-btn{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 13px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;color:var(--text2);cursor:pointer;display:none;align-items:center;gap:6px;transition:all .15s;}
+  .logout-btn:hover{background:var(--red-bg);color:var(--red);border-color:#f4c5c5;}
+  .login-lock{font-size:11px;color:var(--text3);text-align:center;margin-top:14px;display:flex;align-items:center;justify-content:center;gap:5px;}
+
+  /* XL REPORT */
+  .xl-report-card{background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius);overflow:hidden;box-shadow:0 4px 20px rgba(44,32,21,.09);}
+  .xl-report-topbar{background:linear-gradient(135deg,#2c5f8a 0%,#1a3d5c 100%);padding:14px 18px 12px;}
+  .xl-report-title{font-family:'Playfair Display',serif;font-size:17px;font-weight:600;color:white;margin-bottom:2px;}
+  .xl-report-sub{font-size:11px;color:rgba(255,255,255,.65);}
+  .xl-report-filters{padding:10px 14px;background:var(--surface2);border-bottom:1px solid var(--border);display:flex;gap:5px;flex-wrap:wrap;}
+  .xl-master-wrap{overflow-x:auto;}
+  .xl-master-table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  .xl-master-table thead th{background:#eae3d8;font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.7px;padding:9px 10px;text-align:left;border-bottom:2px solid var(--border2);border-right:1px solid var(--border);white-space:nowrap;position:sticky;top:0;z-index:2;}
+  .xl-master-table thead th:last-child{border-right:none;}
+  .th-num{width:32px;text-align:center !important;background:#ddd6c8 !important;}
+  .th-order{min-width:90px;background:#dce7f2 !important;color:var(--accent) !important;}
+  .xl-master-table tbody td{padding:7px 10px;border-bottom:1px solid var(--border);border-right:1px solid rgba(232,223,208,.5);vertical-align:middle;}
+  .xl-master-table tbody td:last-child{border-right:none;}
+  .xl-master-table tbody tr:hover td{background:var(--accent-bg) !important;}
+  .row-even td{background:rgba(245,240,232,.3);}
+  .row-urgent td{background:rgba(253,240,240,.55) !important;}
+  .td-num{text-align:center;font-family:'DM Mono',monospace;font-size:11px;color:var(--text3);background:#faf7f2 !important;border-right:1px solid var(--border2) !important;}
+  .td-order{background:var(--accent-bg) !important;border-right:2px solid var(--accent2) !important;vertical-align:top !important;padding-top:9px !important;}
+  .td-order-id{font-family:'DM Mono',monospace;font-size:12px;font-weight:700;color:var(--accent);}
+  .td-order-urgent{font-size:10px;color:var(--red);margin-top:4px;background:var(--red-bg);padding:2px 6px;border-radius:4px;display:inline-block;}
+  .td-date{font-size:11px;color:var(--text2);vertical-align:top !important;padding-top:9px !important;background:#faf8f5 !important;white-space:nowrap;}
+  .td-note{color:var(--text3);font-style:italic;font-size:11.5px;}
+  .td-status{vertical-align:top !important;padding-top:9px !important;}
+  .td-act{text-align:center;}
+  .xl-type{font-size:11px;background:var(--surface2);color:var(--text2);padding:2px 8px;border-radius:6px;display:inline-block;}
+  .xl-priority-high{font-size:11px;background:var(--red-bg);color:var(--red);border:1px solid #f4c5c5;padding:2px 7px;border-radius:6px;font-weight:500;}
+  .xl-priority-normal{font-size:11px;color:var(--text3);}
+  .inv-print-btn{font-size:13px;color:var(--text3);background:none;border:1px solid var(--border);border-radius:6px;padding:4px 7px;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .12s;}
+  .inv-print-btn:hover{color:var(--accent);border-color:var(--accent);}
+  .confirm-btn-sm{background:var(--green-bg);color:var(--green);border:1px solid var(--green);border-radius:4px;padding:3px 8px;font-size:10px;font-weight:500;cursor:pointer;font-family:'DM Sans',sans-serif;margin-top:5px;display:block;white-space:nowrap;}
+  .confirm-btn-sm:hover{background:var(--green);color:white;}
+  .xl-report-footer{display:flex;align-items:center;gap:20px;padding:10px 16px;background:var(--surface2);border-top:2px solid var(--border2);font-size:12px;color:var(--text2);flex-wrap:wrap;}
+  .xl-report-footer strong{color:var(--text);}
+
+  /* ORDER PREVIEW */
+  .order-preview-card{background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius);overflow:hidden;box-shadow:0 4px 20px rgba(44,32,21,.09);margin-bottom:1.25rem;}
+  .order-preview-topbar{background:linear-gradient(135deg,#3a7d56 0%,#265c3d 100%);padding:12px 18px 10px;display:flex;align-items:center;justify-content:space-between;}
+  .order-preview-title{font-family:'Playfair Display',serif;font-size:16px;font-weight:600;color:white;}
+  .order-preview-sub{font-size:11px;color:rgba(255,255,255,.65);margin-top:2px;}
+  .order-preview-badge{background:rgba(255,255,255,.25);color:white;font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;}
+  .order-preview-body{padding:14px 16px;}
+  .order-preview-table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  .order-preview-table thead th{background:#edf7f1;font-size:10px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.7px;padding:7px 10px;text-align:left;border-bottom:2px solid #b8dfc9;}
+  .order-preview-table tbody td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:middle;}
+  .order-preview-table tbody tr:last-child td{border-bottom:none;}
+  .order-preview-table tbody tr:hover td{background:var(--green-bg);}
+  .preview-row-num{font-family:'DM Mono',monospace;font-size:11px;color:var(--text3);text-align:center;width:28px;}
+  .preview-item-name{font-weight:500;color:var(--text);}
+  .preview-item-qty{font-family:'DM Mono',monospace;font-weight:600;color:var(--accent);}
+  .preview-item-cat{font-size:11px;background:var(--surface2);color:var(--text2);padding:2px 8px;border-radius:6px;}
+  .preview-item-pri-high{font-size:11px;background:var(--red-bg);color:var(--red);border:1px solid #f4c5c5;padding:2px 7px;border-radius:6px;font-weight:500;}
+  .preview-item-note{color:var(--text3);font-style:italic;font-size:11px;}
+  .order-preview-footer{display:flex;align-items:center;gap:16px;padding:10px 16px;background:var(--green-bg);border-top:2px solid #b8dfc9;font-size:12px;}
+  .order-preview-send-btn{margin-left:auto;padding:7px 18px;background:var(--green);color:white;border:none;border-radius:var(--radius-sm);font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:background .15s;}
+  .order-preview-send-btn:hover{background:#2a5c3e;}
+  .order-preview-send-btn:disabled{background:var(--text3);cursor:not-allowed;}
+  .order-preview-empty{text-align:center;padding:2rem 1rem;color:var(--text3);}
+  .order-preview-empty .ep-icon{font-size:28px;margin-bottom:6px;}
+
+  ::-webkit-scrollbar{width:5px;height:5px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
+
+  /* ══════════════════════════════
+     MOBILE HAMBURGER MENU
+  ══════════════════════════════ */
+  .mobile-menu-btn{display:none;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);width:40px;height:40px;align-items:center;justify-content:center;cursor:pointer;font-size:20px;flex-shrink:0;}
+  .mobile-drawer{display:none;position:fixed;inset:0;z-index:300;pointer-events:none;}
+  .mobile-drawer.open{pointer-events:all;}
+  .mobile-drawer-backdrop{position:absolute;inset:0;background:rgba(44,32,21,.45);opacity:0;transition:opacity .25s;}
+  .mobile-drawer.open .mobile-drawer-backdrop{opacity:1;}
+  .mobile-drawer-panel{position:absolute;top:0;right:0;width:82vw;max-width:300px;height:100%;background:var(--surface);box-shadow:-4px 0 24px rgba(44,32,21,.18);padding:1.25rem 1rem;display:flex;flex-direction:column;gap:12px;transform:translateX(100%);transition:transform .28s cubic-bezier(.22,.61,.36,1);}
+  .mobile-drawer.open .mobile-drawer-panel{transform:translateX(0);}
+  .mobile-drawer-title{font-family:'Playfair Display',serif;font-size:15px;font-weight:600;padding-bottom:10px;border-bottom:1px solid var(--border);color:var(--text);}
+  .mobile-drawer select{width:100%;background:var(--surface2);border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:11px 12px;font-family:'DM Sans',sans-serif;font-size:15px;color:var(--text);outline:none;}
+  .mobile-drawer select:focus{border-color:var(--accent);}
+  .mobile-drawer-logout{width:100%;padding:11px;background:var(--red-bg);color:var(--red);border:1px solid #f4c5c5;border-radius:var(--radius-sm);font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;cursor:pointer;display:none;}
+  .mobile-drawer-close{align-self:flex-end;background:none;border:none;font-size:22px;color:var(--text3);cursor:pointer;line-height:1;padding:2px;}
+
+  /* ══════════════════════════════
+     BREAKPOINT 960px — TABLET
+  ══════════════════════════════ */
+  @media(max-width:960px){
+    .page-layout{grid-template-columns:1fr;}
+    .stats-row{grid-template-columns:1fr 1fr;}
+    .container{padding:1rem;}
+    .header{padding:0 1rem;}
+    .left-sticky,.right-sticky{position:static;max-height:none;}
+    /* Hide desktop branch selector & logout in header */
+    .branch-selector,.logout-btn{display:none !important;}
+    .mobile-menu-btn{display:flex;}
+    .mobile-drawer{display:block;}
+  }
+
+  /* ══════════════════════════════
+     BREAKPOINT 640px — MOBILE
+  ══════════════════════════════ */
+  @media(max-width:640px){
+    /* Header */
+    .header{height:56px;padding:0 .85rem;}
+    .logo-icon{width:32px;height:32px;font-size:16px;}
+    .logo-text{font-size:17px;}
+    .logo-sub{display:none;}
+    .live-indicator{font-size:11px;gap:4px;}
+    .live-dot{width:7px;height:7px;}
+
+    /* Container */
+    .container{padding:.75rem;}
+
+    /* Stats — 2 column grid, compact */
+    .stats-row{grid-template-columns:1fr 1fr;gap:8px;margin-bottom:1rem;}
+    .stat-card{padding:.75rem 1rem;}
+    .stat-value{font-size:22px;}
+    .stat-label{font-size:10px;}
+    .stat-sub{font-size:11px;}
+
+    /* Branch header */
+    .branch-header{gap:10px;padding:.85rem 1rem;margin-bottom:1rem;flex-wrap:wrap;}
+    .branch-avatar{width:40px;height:40px;font-size:20px;}
+    .branch-header > div:last-child{display:none;}
+
+    /* Cards */
+    .card{padding:1rem;margin-bottom:1rem;}
+    .card-title{font-size:15px;}
+
+    /* Form inputs — larger touch targets */
+    .form-input,.form-select{padding:11px 12px;font-size:15px;}
+    .form-label{font-size:12px;}
+    .form-row{grid-template-columns:1fr 1fr;gap:6px;}
+
+    /* Sub chips — wrapping row, bigger tap */
+    .sub-chip{font-size:13px;padding:6px 13px;}
+
+    /* Cart items */
+    .cart-item{padding:10px 10px;gap:8px;}
+    .cart-item-name{font-size:13px;}
+    .cart-edit,.cart-remove{width:32px;height:32px;font-size:15px;}
+    .cart-item-num{width:24px;height:24px;font-size:12px;}
+
+    /* Add item button */
+    .add-item-btn{padding:12px;font-size:14px;}
+
+    /* Send button */
+    .send-all-btn{padding:14px;font-size:15px;}
+
+    /* Filter tabs — horizontal scroll */
+    .filter-tabs{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;scrollbar-width:none;}
+    .filter-tabs::-webkit-scrollbar{display:none;}
+    .filter-tab{flex-shrink:0;font-size:12px;padding:6px 13px;}
+
+    /* XL table — scrollable */
+    .xl-master-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+    .xl-master-table{min-width:520px;}
+    .xl-report-topbar{padding:12px 14px 10px;}
+    .xl-report-title{font-size:15px;}
+    .xl-report-filters{padding:8px 10px;gap:4px;}
+    .xl-report-footer{padding:8px 12px;gap:10px;font-size:11px;}
+
+    /* Order preview table */
+    .order-preview-body{padding:10px 12px;}
+    .order-preview-table{min-width:420px;}
+
+    /* Toast — bottom of screen on mobile */
+    .toast-container{top:auto;bottom:80px;left:12px;right:12px;max-width:none;}
+    .toast{font-size:13px;}
+
+    /* Modals — full screen bottom sheet */
+    .modal{width:100%;max-width:100%;border-radius:20px 20px 0 0;padding:1.25rem 1rem 1.5rem;}
+    .modal-overlay{align-items:flex-end;}
+
+    /* Login box */
+    .login-box{width:100%;max-width:100%;border-radius:20px 20px 0 0;padding:1.75rem 1.25rem 2rem;}
+    .login-overlay{align-items:flex-end;}
+
+    /* Name suggestions */
+    .name-suggestions{max-height:180px;}
+
+    /* Order note + section spacing */
+    .order-note-row{margin-bottom:10px;}
+    .cart-section{margin-bottom:10px;}
+  }
+
+  /* ══════════════════════════════
+     BREAKPOINT 400px — SMALL MOBILE
+  ══════════════════════════════ */
+  @media(max-width:400px){
+    .stats-row{grid-template-columns:1fr 1fr;}
+    .stat-value{font-size:20px;}
+    .form-row{grid-template-columns:1fr;}
+    .header-right{gap:6px;}
+    .notif-btn{width:34px;height:34px;font-size:16px;}
+  }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="logo">
+    <div class="logo-icon">☕</div>
+    <div>
+      <div class="logo-text">Windmill Cafe</div>
+      <div class="logo-sub" id="headerSub">Branch Portal</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="live-indicator"><div class="live-dot"></div>Live</div>
+    <select class="branch-selector" id="branchSelector" onchange="switchBranch(this.value)">
+      <option value="">— Select Your Branch —</option>
+      <option value="dubai">🏙 Dubai Branch</option>
+      <option value="abudhabi">🌆 Abu Dhabi Branch</option>
+      <option value="sharjah">🏘 Sharjah Branch</option>
+      <option value="alain">🌿 Al Ain Branch</option>
+    </select>
+    <button class="logout-btn" id="logoutBtn" onclick="logoutBranch()">🔓 Logout</button>
+    <div class="notif-btn" onclick="clearNotif()">🔔<div class="notif-badge" id="notifBadge"></div></div>
+    <div class="mobile-menu-btn" onclick="openMobileMenu()" aria-label="Menu">☰</div>
+  </div>
+</header>
+
+<!-- MOBILE DRAWER -->
+<div class="mobile-drawer" id="mobileDrawer">
+  <div class="mobile-drawer-backdrop" onclick="closeMobileMenu()"></div>
+  <div class="mobile-drawer-panel">
+    <button class="mobile-drawer-close" onclick="closeMobileMenu()">✕</button>
+    <div class="mobile-drawer-title">☕ Windmill Cafe</div>
+    <div style="font-size:12px;color:var(--text3);text-transform:uppercase;letter-spacing:.7px;font-weight:500;margin-bottom:-4px">Select Branch</div>
+    <select id="mobileBranchSelector" onchange="switchBranch(this.value);closeMobileMenu();">
+      <option value="">— Select Your Branch —</option>
+      <option value="dubai">🏙 Dubai Branch</option>
+      <option value="abudhabi">🌆 Abu Dhabi Branch</option>
+      <option value="sharjah">🏘 Sharjah Branch</option>
+      <option value="alain">🌿 Al Ain Branch</option>
+    </select>
+    <button class="mobile-drawer-logout" id="mobileLogoutBtn" onclick="logoutBranch();closeMobileMenu();">🔓 Logout from Branch</button>
+    <div style="margin-top:auto;font-size:11px;color:var(--text3);text-align:center;padding-top:12px;border-top:1px solid var(--border)">🔒 Each branch has its own password</div>
+  </div>
+</div>
+
+<!-- EDIT MODAL -->
+<div class="modal-overlay" id="editModal">
+  <div class="modal">
+    <div class="modal-title">
+      <span>✏️ Edit Item</span>
+      <button class="modal-close" onclick="closeEditModal()">✕</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Category</label>
+      <select class="form-select" id="edit_cat" onchange="updateEditSubChips()">
+        <option value="">— Select Category —</option>
+      </select>
+      <div id="editSubChipsWrap" style="display:none;margin-top:6px;">
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px;">Quick select item</div>
+        <div class="modal-sub-chips" id="editSubChips"></div>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Item Name *</label>
+      <input class="form-input" id="edit_name" placeholder="Item name...">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Quantity *</label>
+        <input class="form-input" id="edit_qty" placeholder="e.g. 10 kg">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Priority</label>
+        <select class="form-select" id="edit_priority"><option>Normal</option><option>High</option></select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Item Note</label>
+      <input class="form-input" id="edit_notes" placeholder="Optional note...">
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeEditModal()">Cancel</button>
+      <button class="btn-save" onclick="saveEditItem()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- LOGIN MODAL -->
+<div class="login-overlay" id="loginModal">
+  <div class="login-box">
+    <div class="login-branch-icon" id="loginIcon">☕</div>
+    <div class="login-title" id="loginTitle">Branch Login</div>
+    <div class="login-sub" id="loginSub">Enter your branch password to continue</div>
+    <div class="login-error" id="loginError">❌ Incorrect password. Please try again.</div>
+    <div class="login-field">
+      <input class="login-input" type="password" id="loginPassword" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin();">
+      <button class="login-toggle" onclick="toggleLoginPw()" id="loginToggle">👁</button>
+    </div>
+    <button class="login-btn" onclick="doLogin()">🔓 Unlock Branch</button>
+    <button class="login-cancel" onclick="cancelLogin()">Cancel</button>
+    <div class="login-lock">🔒 Each branch has its own password</div>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+<div class="container" id="appContent">
+  <div style="text-align:center;padding:5rem 2rem">
+    <div style="font-size:48px;margin-bottom:1rem">☕</div>
+    <div style="font-family:'Playfair Display',serif;font-size:24px;margin-bottom:8px">Welcome to Windmill Cafe</div>
+    <div style="color:var(--text2);font-size:15px">Please select your branch above to continue.</div>
+  </div>
+</div>
+
+<script>
+/* ── MOBILE DRAWER ── */
+function openMobileMenu(){
+  var d=document.getElementById('mobileDrawer');
+  if(d){d.classList.add('open');document.body.style.overflow='hidden';}
+}
+function closeMobileMenu(){
+  var d=document.getElementById('mobileDrawer');
+  if(d){d.classList.remove('open');document.body.style.overflow='';}
+}
+// Keep mobile selector in sync with current branch
+function syncMobileSelector(val){
+  var ms=document.getElementById('mobileBranchSelector');
+  if(ms)ms.value=val||'';
+}
+
+/* ══════════════════════════════════════
+   FIREBASE SETUP
+══════════════════════════════════════ */
+var FIREBASE_CONFIG = {
+  apiKey: "AIzaSyC_9t2eEv_W7kGVE-3DMtAyPWPl4hQDc9w",
+  databaseURL: "https://windmill-cafe-stors-default-rtdb.firebaseio.com/",
+  projectId: "windmill-cafe-stors",
+};
+if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+var DB = firebase.database();
+
+/* ── LOCAL CACHES ── */
+var _ordersCache   = [];
+var _branchesCache = null;
+var _catsCache     = null;
+var _dbReady       = false;
+
+/* ── BRANCH PASSWORDS (kept local, never stored in Firebase) ── */
+var BRANCH_PASSWORDS = {
+  dubai:    'dubai2024',
+  abudhabi: 'abudhabi2024',
+  sharjah:  'sharjah2024',
+  alain:    'alain2024'
+};
+
+var DEFAULT_BRANCHES_LOCAL = {
+  dubai:    {name:'Dubai Branch',    emoji:'🏙', password:'dubai2024'},
+  abudhabi: {name:'Abu Dhabi Branch', emoji:'🌆', password:'abudhabi2024'},
+  sharjah:  {name:'Sharjah Branch',  emoji:'🏘', password:'sharjah2024'},
+  alain:    {name:'Al Ain Branch',   emoji:'🌿', password:'alain2024'}
+};
+
+// BRANCHES always has passwords merged in
+var BRANCHES = Object.assign({}, DEFAULT_BRANCHES_LOCAL);
+
+function getBranchesWithPasswords() {
+  var src = _branchesCache || DEFAULT_BRANCHES_LOCAL;
+  var merged = {};
+  Object.keys(src).forEach(function(k) {
+    merged[k] = Object.assign({}, src[k], {
+      password: BRANCH_PASSWORDS[k] || (DEFAULT_BRANCHES_LOCAL[k] && DEFAULT_BRANCHES_LOCAL[k].password) || 'windmill2024'
+    });
+  });
+  return merged;
+}
+
+/* ── BRANCH SELECTOR POPULATION ── */
+function updateBranchSelectors() {
+  var options = '<option value="">— Select Your Branch —</option>'
+    + Object.keys(BRANCHES).map(function(k) {
+        var b = BRANCHES[k];
+        return '<option value="' + k + '">' + b.emoji + ' ' + b.name + '</option>';
+      }).join('');
+  var s1 = document.getElementById('branchSelector');
+  var s2 = document.getElementById('mobileBranchSelector');
+  if (s1) { var v1 = s1.value; s1.innerHTML = options; s1.value = v1; }
+  if (s2) { var v2 = s2.value; s2.innerHTML = options; s2.value = v2; }
+}
+
+/* ── FIREBASE LISTENERS ── */
+function initFirebaseListeners() {
+
+  DB.ref('wm_branches').on('value', function(snap) {
+    _branchesCache = snap.val() || null;
+    BRANCHES = getBranchesWithPasswords();
+    updateBranchSelectors();
+    if (currentBranch) render();
+  });
+
+  DB.ref('wm_categories').on('value', function(snap) {
+    var val = snap.val();
+    _catsCache = val ? Object.values(val) : null;
+    if (currentBranch) render();
+  });
+
+  DB.ref('wm_orders').on('value', function(snap) {
+    var val = snap.val();
+    var newOrders = val
+      ? Object.values(val).sort(function(a, b) { return (b._ts || 0) - (a._ts || 0); })
+      : [];
+
+    if (_dbReady && currentBranch) {
+      // Detect status changes on our branch's orders
+      var myNew = newOrders.filter(function(o) { return o.from === currentBranch; });
+      myNew.forEach(function(o) {
+        var prev = prevStatuses[o.id];
+        if (prev && prev !== o.status) {
+          notifCount++;
+          var badge = document.getElementById('notifBadge');
+          if (badge) { badge.style.display = 'flex'; badge.textContent = notifCount > 9 ? '9+' : notifCount; }
+          showToast('Order Updated 🔔', 'Order ' + o.id + ' → ' + o.status, 'update');
+        }
+        prevStatuses[o.id] = o.status;
+      });
+    }
+
+    _ordersCache = newOrders;
+    _dbReady     = true;
+    if (currentBranch) render();
+  });
+}
+
+/* ── DATA ── */
+function getData(){ return _ordersCache; }
+function saveData(d){
+  _ordersCache = d;
+  d.forEach(function(o, i) { if (!o._ts) o._ts = Date.now() - i; });
+  var obj = {};
+  d.forEach(function(o) { obj[o.id.replace(/[.#$[\]/]/g, '_')] = o; });
+  DB.ref('wm_orders').set(obj).catch(function(e){ console.error('Firebase saveData:', e); });
+}
+
+var DEFAULT_CATEGORIES=[
+  {id:'c1',name:'Coffee Beans',emoji:'☕',subs:['Ethiopia Guji','Brazil Cerrado','Colombia Huila','Kenya AA','Yemen Haraaz','Guatemala Antigua','Costa Rica Tarrazu']},
+  {id:'c2',name:'Sweet Items',emoji:'🍰',subs:['Chocolate Cake','Muffin','Croissant','Cookie','Brownie','Cheesecake','Tiramisu','Macaron']},
+  {id:'c3',name:'General Items',emoji:'📦',subs:['Cups','Lids','Napkins','Sugar','Milk','Straws','Stir Sticks','Take-away Bags']},
+  {id:'c4',name:'Equipment',emoji:'⚙️',subs:['Grinder Parts','Filter Papers','Portafilter','Group Head Gasket','Steam Wand Tip']},
+  {id:'c5',name:'Packaging',emoji:'🛍',subs:['Paper Bags','Gift Boxes','Labels','Tape','Stickers']},
+  {id:'c6',name:'Cleaning Supplies',emoji:'🧹',subs:['Detergent','Descaler','Wipes','Gloves','Sponges']},
+];
+
+var currentBranch='';
+var currentFilter='All';
+var notifCount=0;
+var cartItems=[];
+var prevStatuses={};
+var editingItemId=null;
+var pendingBranch='';
+
+/* ── CATEGORIES ── */
+function getCategories(){
+  return _catsCache || DEFAULT_CATEGORIES;
+}
+
+/* ── GENERATORS ── */
+function genOrderNumber(branch){
+  var key='wm_ord_seq_'+branch;
+  var n=(parseInt(localStorage.getItem(key)||'0')+1);
+  localStorage.setItem(key,n);
+  var prefix={dubai:'DXB',abudhabi:'AUH',sharjah:'SHJ',alain:'AAN'}[branch]||'BR';
+  return prefix+'-'+String(n).padStart(4,'0');
+}
+function genItemId(){return Math.random().toString(36).slice(2,8);}
+function now(){return new Date().toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});}
+function today(){return new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});}
+
+/* ── TOAST ── */
+function showToast(title,msg,type){
+  var c=document.getElementById('toastContainer');
+  var t=document.createElement('div');
+  t.className='toast '+(type||'');
+  t.innerHTML='<div class="toast-title">'+title+'</div><div class="toast-msg">'+msg+'</div>';
+  c.appendChild(t);
+  setTimeout(function(){t.remove();},4500);
+}
+function clearNotif(){notifCount=0;var b=document.getElementById('notifBadge');b.style.display='none';}
+
+function statusClass(s){
+  var map={Pending:'pending',Processing:'processing',Arranged:'arranged',Sent:'sent',Received:'received',Cancelled:'cancelled'};
+  return map[s]||'pending';
+}
+
+/* ── BRANCH LOGIN ── */
+function switchBranch(val){
+  if(!val){
+    currentBranch='';
+    document.getElementById('headerSub').textContent='Branch Portal';
+    document.getElementById('appContent').innerHTML='<div style="text-align:center;padding:5rem 2rem"><div style="font-size:48px;margin-bottom:1rem">☕</div><div style="font-family:\'Playfair Display\',serif;font-size:24px;margin-bottom:8px">Welcome to Windmill Cafe</div><div style="color:var(--text2);font-size:15px">Please select your branch above to continue.</div></div>';
+    return;
+  }
+  pendingBranch=val;
+  document.getElementById('branchSelector').value='';
+  var b=BRANCHES[val];
+  document.getElementById('loginIcon').textContent=b.emoji;
+  document.getElementById('loginTitle').textContent=b.name;
+  document.getElementById('loginSub').textContent='Enter the password for '+b.name;
+  document.getElementById('loginPassword').value='';
+  document.getElementById('loginError').style.display='none';
+  document.getElementById('loginModal').classList.add('open');
+  setTimeout(function(){document.getElementById('loginPassword').focus();},200);
+}
+
+function doLogin(){
+  var pw=document.getElementById('loginPassword').value;
+  var b=BRANCHES[pendingBranch];
+  if(!b)return;
+  if(pw===b.password){
+    document.getElementById('loginModal').classList.remove('open');
+    currentBranch=pendingBranch;
+    currentFilter='All';
+    cartItems=[];
+    document.getElementById('branchSelector').value=currentBranch;
+    syncMobileSelector(currentBranch);
+    document.getElementById('headerSub').textContent=b.name;
+    render();
+    showToast('Welcome 👋','Logged in to '+b.name,'success');
+  }else{
+    var err=document.getElementById('loginError');
+    err.style.display='block';
+    document.getElementById('loginPassword').value='';
+    document.getElementById('loginPassword').focus();
+    setTimeout(function(){err.style.display='none';},3000);
+  }
+}
+
+function cancelLogin(){
+  document.getElementById('loginModal').classList.remove('open');
+  document.getElementById('branchSelector').value=currentBranch||'';
+  pendingBranch='';
+}
+
+function toggleLoginPw(){
+  var inp=document.getElementById('loginPassword');
+  var btn=document.getElementById('loginToggle');
+  if(inp.type==='password'){inp.type='text';btn.textContent='🙈';}
+  else{inp.type='password';btn.textContent='👁';}
+}
+
+function logoutBranch(){
+  currentBranch='';currentFilter='All';cartItems=[];pendingBranch='';
+  document.getElementById('branchSelector').value='';
+  syncMobileSelector('');
+  document.getElementById('headerSub').textContent='Branch Portal';
+  document.getElementById('appContent').innerHTML='<div style="text-align:center;padding:5rem 2rem"><div style="font-size:48px;margin-bottom:1rem">☕</div><div style="font-family:\'Playfair Display\',serif;font-size:24px;margin-bottom:8px">Welcome to Windmill Cafe</div><div style="color:var(--text2);font-size:15px">Please select your branch above to continue.</div></div>';
+  var lb=document.getElementById('logoutBtn');if(lb)lb.style.display='none';
+  var mlb=document.getElementById('mobileLogoutBtn');if(mlb)mlb.style.display='none';
+  showToast('Logged Out','Branch session ended','');
+}
+
+/* ── NAME SUGGESTION DROPDOWN ── */
+var suggHighlight=-1;
+function getAllSuggItems(){
+  var cats=getCategories();
+  var items=[];
+  cats.forEach(function(cat){
+    (cat.subs||[]).forEach(function(sub){
+      items.push({name:sub,catId:cat.id,catName:cat.name,catEmoji:cat.emoji||''});
+    });
+  });
+  return items;
+}
+
+function onCatChange(){
+  // When category changes, clear item name and refresh suggestions
+  var inp=document.getElementById('ci_name');
+  if(inp){inp.value='';inp.placeholder='Select from list or type custom...';}
+  hideNameSuggestions();
+  // Auto-open suggestions for the newly selected category
+  setTimeout(function(){
+    var inp2=document.getElementById('ci_name');
+    if(inp2)showNameSuggestions('');
+  },80);
+}
+
+function showNameSuggestions(val){
+  var drop=document.getElementById('nameSuggestions');
+  if(!drop)return;
+  suggHighlight=-1;
+
+  // Filter by selected category if one is chosen
+  var catSel=document.getElementById('ci_cat');
+  var selectedCatId=catSel?catSel.value:'';
+  var all=getAllSuggItems();
+
+  var pool = selectedCatId
+    ? all.filter(function(i){return i.catId===selectedCatId;})
+    : all;
+
+  var filtered = val
+    ? pool.filter(function(i){return i.name.toLowerCase().indexOf(val.toLowerCase())!==-1;})
+    : pool;
+
+  if(!filtered.length){
+    drop.innerHTML='<div class="name-sugg-empty">'+(val?'No matches — will add as custom item':'No items in this category yet')+'</div>';
+    drop.classList.add('open');
+    return;
+  }
+  drop.innerHTML=filtered.slice(0,40).map(function(i,idx){
+    var hi=val?i.name.replace(new RegExp('('+val.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi'),'<strong>$1</strong>'):i.name;
+    return'<div class="name-sugg-item" data-idx="'+idx+'" data-name="'+i.name.replace(/"/g,'&quot;')+'" data-catid="'+i.catId+'" onmousedown="selectNameSuggestion(\''+i.name.replace(/'/g,"\\'")+'\',\''+i.catId+'\')">'
+      +'<span class="name-sugg-text">'+hi+'</span>'
+      +(selectedCatId?'':'<span class="name-sugg-cat">'+i.catEmoji+' '+i.catName+'</span>')
+    +'</div>';
+  }).join('');
+  drop.classList.add('open');
+}
+
+function hideNameSuggestions(){
+  var drop=document.getElementById('nameSuggestions');
+  if(drop)drop.classList.remove('open');
+  suggHighlight=-1;
+}
+
+function selectNameSuggestion(name,catId){
+  var inp=document.getElementById('ci_name');
+  if(inp)inp.value=name;
+  hideNameSuggestions();
+  // Auto-select category if not already set
+  var catSel=document.getElementById('ci_cat');
+  if(catSel&&catId&&!catSel.value){catSel.value=catId;}
+  var qtyEl=document.getElementById('ci_qty');
+  if(qtyEl)qtyEl.focus();
+}
+
+function handleNameKeydown(e){
+  var drop=document.getElementById('nameSuggestions');
+  var items=drop?drop.querySelectorAll('.name-sugg-item'):[];
+  if(e.key==='ArrowDown'){
+    e.preventDefault();
+    suggHighlight=Math.min(suggHighlight+1,items.length-1);
+    items.forEach(function(el,i){el.classList.toggle('highlighted',i===suggHighlight);});
+  }else if(e.key==='ArrowUp'){
+    e.preventDefault();
+    suggHighlight=Math.max(suggHighlight-1,0);
+    items.forEach(function(el,i){el.classList.toggle('highlighted',i===suggHighlight);});
+  }else if(e.key==='Enter'){
+    e.preventDefault();
+    if(suggHighlight>=0&&items[suggHighlight]){
+      var el=items[suggHighlight];
+      selectNameSuggestion(el.dataset.name,el.dataset.catid);
+    }else{
+      hideNameSuggestions();
+      addToCart();
+    }
+  }else if(e.key==='Escape'){
+    hideNameSuggestions();
+  }
+}
+
+// Hide suggestions when clicking outside
+document.addEventListener('click',function(e){
+  var wrap=document.querySelector('.name-input-wrap');
+  if(wrap&&!wrap.contains(e.target))hideNameSuggestions();
+});
+
+/* ── CATEGORY PICKER (FORM) ── */
+function updateSubItems(){
+  var catId=document.getElementById('ci_cat').value;
+  var section=document.getElementById('subChipsSection');
+  var chipsWrap=document.getElementById('subChipItems');
+  if(!catId){section.style.display='none';return;}
+  var cats=getCategories();
+  var found=cats.find(function(c){return c.id===catId;});
+  if(!found||!found.subs||!found.subs.length){section.style.display='none';return;}
+  section.style.display='block';
+  chipsWrap.innerHTML=found.subs.map(function(s){
+    return '<button type="button" class="sub-chip" onclick="selectSubItem(\''+s.replace(/'/g,"\\'")+'\')">'+(found.emoji?found.emoji+' ':'')+s+'</button>';
+  }).join('');
+}
+
+function selectSubItem(name){
+  document.getElementById('ci_name').value=name;
+  document.querySelectorAll('.sub-chip').forEach(function(c){
+    c.classList.toggle('active',c.textContent.trim().replace(/^[^\s]+\s/,'')===name||c.textContent.trim()===name);
+  });
+  document.getElementById('ci_qty').focus();
+}
+
+/* ── CATEGORY PICKER (EDIT MODAL) ── */
+function updateEditSubChips(){
+  var catId=document.getElementById('edit_cat').value;
+  var wrap=document.getElementById('editSubChipsWrap');
+  var chips=document.getElementById('editSubChips');
+  if(!catId){wrap.style.display='none';return;}
+  var cats=getCategories();
+  var found=cats.find(function(c){return c.id===catId;});
+  if(!found||!found.subs||!found.subs.length){wrap.style.display='none';return;}
+  wrap.style.display='block';
+  chips.innerHTML=found.subs.map(function(s){
+    return '<button type="button" class="modal-sub-chip" onclick="selectEditSubItem(\''+s.replace(/'/g,"\\'")+'\')">'+(found.emoji?found.emoji+' ':'')+s+'</button>';
+  }).join('');
+}
+
+function selectEditSubItem(name){
+  document.getElementById('edit_name').value=name;
+  document.querySelectorAll('.modal-sub-chip').forEach(function(c){
+    c.classList.toggle('active',c.textContent.trim().replace(/^[^\s]+\s/,'')===name||c.textContent.trim()===name);
+  });
+}
+
+/* ── CART ── */
+function addToCart(){
+  var name=document.getElementById('ci_name').value.trim();
+  var qty=document.getElementById('ci_qty').value.trim();
+  var catId=document.getElementById('ci_cat').value;
+  var priority=document.getElementById('ci_priority').value;
+  var notes=document.getElementById('ci_notes').value.trim();
+  if(!name){document.getElementById('ci_name').focus();showToast('Item name required','Please enter an item name','');return;}
+  if(!qty){document.getElementById('ci_qty').focus();showToast('Quantity required','Please enter a quantity','');return;}
+  
+  // Resolve category info
+  var catName='';var catEmoji='';
+  if(catId){
+    var cats=getCategories();
+    var found=cats.find(function(c){return c.id===catId;});
+    if(found){catName=found.name;catEmoji=found.emoji||'';}
+  }
+  
+  cartItems.push({id:genItemId(),name:name,qty:qty,type:catName,catId:catId,catEmoji:catEmoji,priority:priority,notes:notes});
+  document.getElementById('ci_name').value='';
+  document.getElementById('ci_qty').value='';
+  document.getElementById('ci_notes').value='';
+  document.getElementById('ci_name').focus();
+  renderCart();
+  showToast('Added ✓','"'+name+'" added to list','success');
+}
+
+function removeFromCart(id){
+  cartItems=cartItems.filter(function(i){return i.id!==id;});
+  renderCart();
+}
+
+function openEditModal(id){
+  var item=cartItems.find(function(i){return i.id===id;});
+  if(!item)return;
+  editingItemId=id;
+  
+  // Populate category dropdown
+  var cats=getCategories();
+  var catSel=document.getElementById('edit_cat');
+  catSel.innerHTML='<option value="">— No Category —</option>'+cats.map(function(c){
+    return'<option value="'+c.id+'"'+(c.id===item.catId?' selected':'')+'>'+c.emoji+' '+c.name+'</option>';
+  }).join('');
+  
+  document.getElementById('edit_name').value=item.name;
+  document.getElementById('edit_qty').value=item.qty;
+  document.getElementById('edit_priority').value=item.priority;
+  document.getElementById('edit_notes').value=item.notes||'';
+  document.getElementById('editModal').classList.add('open');
+  
+  // Show sub-chips for current category
+  updateEditSubChips();
+}
+
+function closeEditModal(){
+  editingItemId=null;
+  document.getElementById('editModal').classList.remove('open');
+}
+
+function saveEditItem(){
+  var name=document.getElementById('edit_name').value.trim();
+  var qty=document.getElementById('edit_qty').value.trim();
+  if(!name||!qty)return;
+  var idx=cartItems.findIndex(function(i){return i.id===editingItemId;});
+  if(idx===-1)return;
+  
+  var catId=document.getElementById('edit_cat').value;
+  var catName='';var catEmoji='';
+  if(catId){
+    var cats=getCategories();
+    var found=cats.find(function(c){return c.id===catId;});
+    if(found){catName=found.name;catEmoji=found.emoji||'';}
+  }
+  
+  cartItems[idx]=Object.assign({},cartItems[idx],{
+    name:name,qty:qty,catId:catId,type:catName,catEmoji:catEmoji,
+    priority:document.getElementById('edit_priority').value,
+    notes:document.getElementById('edit_notes').value.trim()
+  });
+  closeEditModal();
+  renderCart();
+  showToast('Updated ✓','"'+name+'" updated','success');
+}
+
+function renderCart(){
+  var cartEl=document.getElementById('cartItems');
+  var sendBtn=document.getElementById('sendAllBtn');
+  var countEl=document.getElementById('cartCount');
+  if(!cartEl)return;
+  if(countEl)countEl.textContent=cartItems.length;
+  var sp=sendBtn&&sendBtn.querySelector('.item-count-badge');
+  if(sp)sp.textContent=cartItems.length+' item'+(cartItems.length!==1?'s':'');
+  if(sendBtn)sendBtn.disabled=cartItems.length===0;
+  if(cartItems.length===0){
+    cartEl.innerHTML='<div class="cart-empty"><div class="e-icon">📋</div>No items yet — add items above</div>';
+  }else{
+    cartEl.innerHTML=cartItems.map(function(it,i){
+      return '<div class="cart-item">'
+        +'<div class="cart-item-num">'+(i+1)+'</div>'
+        +'<div style="flex:1;min-width:0">'
+          +'<div class="cart-item-name">'+it.name+'</div>'
+          +'<div style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap">'
+            +'<span class="cart-item-qty">× '+it.qty+'</span>'
+            +(it.type?'<span class="cart-item-type">'+(it.catEmoji||'')+' '+it.type+'</span>':'')
+            +(it.priority==='High'?'<span class="priority-high-tag">⚡ High</span>':'')
+            +(it.notes?'<span style="font-size:11px;color:var(--text3);font-style:italic">"'+it.notes+'"</span>':'')
+          +'</div>'
+        +'</div>'
+        +'<div class="cart-actions">'
+          +'<button class="cart-edit" title="Edit" onclick="openEditModal(\''+it.id+'\')">✏️</button>'
+          +'<button class="cart-remove" title="Remove" onclick="removeFromCart(\''+it.id+'\')">✕</button>'
+        +'</div>'
+      +'</div>';
+    }).join('');
+  }
+  refreshPreview();
+}
+
+function refreshPreview(){
+  var previewEl=document.getElementById('rightOrderPreview');
+  if(previewEl&&typeof buildOrderPreview==='function'){
+    previewEl.outerHTML='<div id="rightOrderPreview">'+buildOrderPreview()+'</div>';
+  }
+}
+
+function clearCart(){
+  if(cartItems.length>0&&!confirm('Clear all items?'))return;
+  cartItems=[];renderCart();
+}
+
+function submitOrder(){
+  if(cartItems.length===0)return;
+  var orderNote=document.getElementById('orderNote').value.trim();
+  var orders=getData();
+  var orderNum=genOrderNumber(currentBranch);
+  var order={
+    id:orderNum,from:currentBranch,branchName:BRANCHES[currentBranch].name,
+    date:today(),items:cartItems.slice(),note:orderNote,
+    status:'Pending',created:now(),updated:now(),response:'',_ts:Date.now()
+  };
+  orders.unshift(order);
+  saveData(orders);
+  cartItems=[];
+  document.getElementById('orderNote').value='';
+  showToast('Order Sent ✓','Order '+orderNum+' sent to Main Branch','success');
+  render();
+}
+
+function confirmReceived(orderId){
+  var orders=getData();
+  var idx=orders.findIndex(function(o){return o.id===orderId;});
+  if(idx===-1)return;
+  orders[idx].status='Received';orders[idx].updated=now();
+  saveData(orders);
+  showToast('Received ✓','Order '+orderId+' marked as received','success');
+  render();
+}
+
+function setFilter(f){currentFilter=f;render();}
+
+/* ── ORDER PREVIEW (right panel) ── */
+function buildOrderPreview(){
+  var count=cartItems.length;
+  var urgentCount=cartItems.filter(function(i){return i.priority==='High';}).length;
+  var bodyHTML='';
+  if(count===0){
+    bodyHTML='<div class="order-preview-empty"><div class="ep-icon">📋</div><div style="font-size:13px;color:var(--text3)">No items in order list yet</div><div style="font-size:11px;color:var(--border2);margin-top:4px">Add items from the left panel</div></div>';
+  }else{
+    var rows=cartItems.map(function(it,idx){
+      return'<tr>'
+        +'<td class="preview-row-num">'+(idx+1)+'</td>'
+        +'<td class="preview-item-name">'+it.name+'</td>'
+        +'<td class="preview-item-qty">'+it.qty+'</td>'
+        +'<td><span class="preview-item-cat">'+(it.catEmoji||'')+(it.type||'—')+'</span></td>'
+        +'<td>'+(it.priority==='High'?'<span class="preview-item-pri-high">⚡ High</span>':'<span style="font-size:11px;color:var(--text3)">—</span>')+'</td>'
+        +'<td class="preview-item-note">'+(it.notes||'<span style="color:var(--border2)">—</span>')+'</td>'
+        +'</tr>';
+    }).join('');
+    bodyHTML='<div style="overflow-x:auto"><table class="order-preview-table"><thead><tr><th style="width:28px;text-align:center">#</th><th>Item Name</th><th>Quantity</th><th>Category</th><th>Priority</th><th>Note</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }
+  var footerHTML=count===0
+    ?'<span style="color:var(--text3);font-style:italic">List is empty</span>'
+    :'<span>📦 <strong>'+count+'</strong> item'+(count!==1?'s':'')+'</span>'
+      +(urgentCount>0?'<span style="color:var(--red)">⚡ <strong>'+urgentCount+'</strong> urgent</span>':'')
+      +'<button class="order-preview-send-btn" onclick="submitOrder()" '+(count===0?'disabled':'')+'>↑ Send to Main Branch</button>';
+  return'<div class="order-preview-card">'
+    +'<div class="order-preview-topbar">'
+      +'<div><div class="order-preview-title">📋 Current Order List</div><div class="order-preview-sub">Ready to send to Main Branch</div></div>'
+      +'<div class="order-preview-badge">'+count+' item'+(count!==1?'s':'')+'</div>'
+    +'</div>'
+    +'<div class="order-preview-body">'+bodyHTML+'</div>'
+    +'<div class="order-preview-footer">'+footerHTML+'</div>'
+    +'</div>';
+}
+
+/* ── XL REPORT TABLE ── */
+function buildXLTable(filtered,allOrders,b){
+  var totalUrgent=filtered.reduce(function(a,o){return a+o.items.filter(function(i){return i.priority==='High';}).length;},0);
+  var filterBtns=['All','Pending','Processing','Arranged','Sent','Received'].map(function(f){
+    var cnt=f==='All'?allOrders.length:allOrders.filter(function(o){return o.status===f;}).length;
+    return'<button class="filter-tab '+(currentFilter===f?'active':'')+'" onclick="setFilter(\''+f+'\')">'+f+' <span class="cnt">'+cnt+'</span></button>';
+  }).join('');
+  var tableHTML='';
+  if(filtered.length===0){
+    tableHTML='<div class="empty-state"><div class="icon">✉</div><p>No orders for this filter</p></div>';
+  }else{
+    var tableBody='';
+    filtered.forEach(function(o,idx){
+      var highCount=o.items.filter(function(i){return i.priority==='High';}).length;
+      var rowClass=(idx%2===0?'row-odd':'row-even')+(highCount>0?' row-urgent':'');
+      tableBody+='<tr class="'+rowClass+'">'
+        +'<td class="td-num">'+(idx+1)+'</td>'
+        +'<td class="td-order"><div class="td-order-id">'+o.id+'</div>'+(highCount>0?'<div class="td-order-urgent">⚡ '+highCount+' urgent</div>':'')+'</td>'
+        +'<td class="td-date">'+(o.date||o.created)+'</td>'
+        +'<td class="td-note">'+(o.note?o.note:'<span style="color:var(--border2)">—</span>')+'</td>'
+        +'<td>'+(highCount>0?'<span class="xl-priority-high">⚡ High</span>':'<span class="xl-priority-normal">Normal</span>')+'</td>'
+        +'<td class="td-status"><span class="badge '+statusClass(o.status)+'">'+o.status+'</span>'+(o.status==='Sent'?'<br><button class="confirm-btn-sm" onclick="confirmReceived(\''+o.id+'\')">✓ Received</button>':'')+'</td>'
+        +'<td class="td-act"><button class="inv-print-btn" onclick="printOrder(\''+o.id+'\')">🖨</button></td>'
+        +'</tr>';
+    });
+    tableHTML='<div class="xl-master-wrap"><table class="xl-master-table"><thead><tr><th class="th-num">#</th><th class="th-order">Order No.</th><th>Date</th><th>Note</th><th>Priority</th><th>Status</th><th style="width:38px"></th></tr></thead><tbody>'+tableBody+'</tbody></table></div>'
+      +'<div class="xl-report-footer"><span>📋 <strong>'+filtered.length+'</strong> order'+(filtered.length!==1?'s':'')+'</span>'+(totalUrgent>0?'<span style="color:var(--red)">⚡ <strong>'+totalUrgent+'</strong> urgent</span>':'')+'<span style="margin-left:auto;color:var(--text3);font-size:11px">'+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</span></div>';
+  }
+  return'<div class="xl-report-card">'
+    +'<div class="xl-report-topbar"><div class="xl-report-title">☕ '+b.name+' — Order Report</div><div class="xl-report-sub">All submitted orders · '+new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})+'</div></div>'
+    +'<div class="xl-report-filters">'+filterBtns+'</div>'
+    +tableHTML
+    +'</div>';
+}
+
+/* ── PRINT ── */
+function printOrder(orderId){
+  var orders=getData();
+  var o=orders.find(function(x){return x.id===orderId;});
+  if(!o)return;
+  var w=window.open('','_blank','width=700,height=600');
+  var rows=o.items.map(function(it,i){
+    return'<tr><td style="text-align:center;color:#999;font-size:12px">'+(i+1)+'</td><td style="font-weight:500">'+it.name+'</td><td style="font-family:monospace;color:#2c5f8a;font-weight:500">'+it.qty+'</td><td>'+(it.catEmoji||'')+(it.type||'—')+'</td><td>'+(it.priority==='High'?'⚡ High':'Normal')+'</td><td style="color:#999;font-style:italic">'+(it.notes||'—')+'</td></tr>';
+  }).join('');
+  w.document.write('<!DOCTYPE html><html><head><title>Order '+o.id+'</title><style>body{font-family:\'Segoe UI\',sans-serif;margin:40px;color:#2c2015}h1{font-size:22px;margin-bottom:4px}.meta{font-size:13px;color:#7a6a55;margin-bottom:20px}table{width:100%;border-collapse:collapse;font-size:13px}th{background:#f5f0e8;text-align:left;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#7a6a55;border-bottom:2px solid #d4c9b4}td{padding:7px 10px;border-bottom:1px solid #e8dfd0}tr:last-child td{border-bottom:none}.footer{margin-top:20px;font-size:12px;color:#999;border-top:1px solid #e8dfd0;padding-top:12px}@media print{body{margin:20px}}</style></head><body><h1>☕ Windmill Cafe — Order '+o.id+'</h1><div class="meta"><strong>'+(o.branchName||o.from)+'</strong> &nbsp;|&nbsp; Date: '+(o.date||o.created)+' &nbsp;|&nbsp; Status: '+o.status+'</div><table><thead><tr><th>#</th><th>Item</th><th>Qty</th><th>Category</th><th>Priority</th><th>Note</th></tr></thead><tbody>'+rows+'</tbody></table>'+(o.note?'<div style="margin-top:14px;font-size:13px;color:#7a6a55;font-style:italic;padding:8px 12px;background:#fdf6e3;border-left:3px solid #d4c9b4;border-radius:4px">Note: '+o.note+'</div>':'')+'<div class="footer">Order ID: '+o.id+' &nbsp;·&nbsp; Created: '+o.created+' &nbsp;·&nbsp; '+o.items.length+' item(s)</div><script>window.print();<\/script></body></html>');
+}
+
+/* ── MAIN RENDER ── */
+function render(){
+  if(!currentBranch)return;
+  var logoutBtn=document.getElementById('logoutBtn');if(logoutBtn)logoutBtn.style.display='flex';
+  var mobileLogoutBtn=document.getElementById('mobileLogoutBtn');if(mobileLogoutBtn)mobileLogoutBtn.style.display='block';
+  syncMobileSelector(currentBranch);
+  var b=BRANCHES[currentBranch];
+  var allOrders=getData().filter(function(o){return o.from===currentBranch;});
+  var s={
+    pending:allOrders.filter(function(o){return o.status==='Pending';}).length,
+    processing:allOrders.filter(function(o){return o.status==='Processing';}).length,
+    sent:allOrders.filter(function(o){return o.status==='Sent';}).length,
+    received:allOrders.filter(function(o){return o.status==='Received';}).length
+  };
+  var filtered=currentFilter==='All'?allOrders:allOrders.filter(function(o){return o.status===currentFilter;});
+
+  // Build category select options
+  var cats=getCategories();
+  var catOptions='<option value="">— Select Category —</option>'
+    +cats.map(function(c){return'<option value="'+c.id+'">'+c.emoji+' '+c.name+'</option>';}).join('');
+
+  document.getElementById('appContent').innerHTML=
+    '<div class="branch-header">'
+      +'<div class="branch-avatar">'+b.emoji+'</div>'
+      +'<div>'
+        +'<div style="font-size:20px;font-family:\'Playfair Display\',serif;font-weight:500">'+b.name+'</div>'
+        +'<div style="font-size:13px;color:var(--text2);margin-top:2px">Build your request list, then send everything to Main Branch at once</div>'
+      +'</div>'
+      +'<div style="margin-left:auto;text-align:right;flex-shrink:0">'
+        +'<div style="font-size:12px;color:var(--text3)">Last sync</div>'
+        +'<div style="font-size:13px;font-weight:500;color:var(--text2)">'+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</div>'
+      +'</div>'
+    +'</div>'
+
+    +'<div class="stats-row">'
+      +'<div class="stat-card highlight"><div class="stat-label">Pending</div><div class="stat-value">'+s.pending+'</div><div class="stat-sub">At main branch</div></div>'
+      +'<div class="stat-card"><div class="stat-label">Processing</div><div class="stat-value">'+s.processing+'</div><div class="stat-sub">Being arranged</div></div>'
+      +'<div class="stat-card"><div class="stat-label">Sent</div><div class="stat-value">'+s.sent+'</div><div class="stat-sub">On the way</div></div>'
+      +'<div class="stat-card"><div class="stat-label">Received</div><div class="stat-value">'+s.received+'</div><div class="stat-sub">Completed</div></div>'
+    +'</div>'
+
+    +'<div class="page-layout">'
+
+      // LEFT — BUILD ORDER
+      +'<div class="left-sticky">'
+        +'<div class="card">'
+          +'<div class="card-header"><span class="card-title">Build Order List</span><span style="font-size:12px;color:var(--text3)">Add items one by one</span></div>'
+          +'<div class="item-builder">'
+
+            // Category picker
+            +'<div class="form-group">'
+              +'<label class="form-label">Category</label>'
+              +'<select class="form-select" id="ci_cat" onchange="onCatChange()">'+catOptions+'</select>'
+            +'</div>'
+
+            // Item name with filtered suggestion dropdown
+            +'<div class="form-group">'
+              +'<label class="form-label">Item Name *</label>'
+              +'<div class="name-input-wrap">'
+                +'<input class="form-input" id="ci_name" placeholder="Select category first, or type to search..." autocomplete="off"'
+                  +' oninput="showNameSuggestions(this.value)"'
+                  +' onfocus="showNameSuggestions(this.value)"'
+                  +' onkeydown="handleNameKeydown(event)">'
+                +'<div class="name-suggestions" id="nameSuggestions"></div>'
+              +'</div>'
+            +'</div>'
+
+            +'<div class="form-row">'
+              +'<div class="form-group"><label class="form-label">Quantity *</label><input class="form-input" id="ci_qty" placeholder="e.g. 10 kg" onkeydown="if(event.key===\'Enter\'){event.preventDefault();addToCart();}"></div>'
+              +'<div class="form-group"><label class="form-label">Priority</label><select class="form-select" id="ci_priority"><option>Normal</option><option>High</option></select></div>'
+            +'</div>'
+            +'<div class="form-group"><label class="form-label">Item Note</label><input class="form-input" id="ci_notes" placeholder="Optional..."></div>'
+            +'<button class="add-item-btn" onclick="addToCart()"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Add to List</button>'
+          +'</div>'
+
+          +'<div class="cart-section">'
+            +'<div class="cart-header"><span>Order List <span id="cartCount" style="background:var(--accent-bg);color:var(--accent);font-size:11px;padding:1px 7px;border-radius:10px;margin-left:4px">0</span></span>'
+              +'<button onclick="clearCart()" style="font-size:11px;color:var(--text3);background:none;border:none;cursor:pointer;font-family:\'DM Sans\',sans-serif;">Clear all</button></div>'
+            +'<div id="cartItems"><div class="cart-empty"><div class="e-icon">📋</div>No items yet — add items above</div></div>'
+          +'</div>'
+          +'<div class="order-note-row"><label class="form-label">Order Note (optional)</label><input class="form-input" id="orderNote" placeholder="General note for this order..."></div>'
+          +'<button class="send-all-btn" id="sendAllBtn" onclick="submitOrder()" disabled>↑ Send Order to Main Branch <span class="item-count-badge">0 items</span></button>'
+        +'</div>'
+      +'</div>'
+
+      // RIGHT — ORDER PREVIEW + REPORT
+      +'<div class="right-sticky">'
+        +'<div id="rightOrderPreview">'+buildOrderPreview()+'</div>'
+        +buildXLTable(filtered,allOrders,b)
+      +'</div>'
+
+    +'</div>';
+
+  renderCart();
+}
+
+/* ── CROSS-TAB SYNC (Firebase onValue handles this) ── */
+document.getElementById('editModal').addEventListener('click',function(e){if(e.target===this)closeEditModal();});
+
+/* ── INIT ── */
+initFirebaseListeners();
+function trackStatuses(){
+  if(currentBranch)getData().filter(function(o){return o.from===currentBranch;}).forEach(function(o){prevStatuses[o.id]=o.status;});
+}
+setInterval(trackStatuses,5000);
+</script>
+</body>
+</html>
