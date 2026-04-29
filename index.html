@@ -389,6 +389,7 @@
   </div>
   <div class="header-right">
     <div class="live-indicator"><div class="live-dot"></div>Live</div>
+    <button class="logout-btn" id="refreshBtn" onclick="refreshAllData()" style="background:var(--surface2);border-color:var(--border);color:var(--text2)" title="Re-sync all data">↺</button>
     <select class="branch-selector" id="branchSelector" onchange="switchBranch(this.value)">
       <option value="">— Select Your Branch —</option>
       <option value="dubai">🏙 Dubai Branch</option>
@@ -574,9 +575,13 @@ function initFirebaseListeners() {
     if (currentBranch) render();
   });
 
-  DB.ref('wm_categories').on('value', function(snap) {
+  DB.ref('wm_categories_data').on('value', function(snap) {
     var val = snap.val();
-    _catsCache = val ? Object.values(val) : null;
+    if (val && Array.isArray(val) && val.length) {
+      _catsCache = val;
+    } else if (!val) {
+      _catsCache = null; // will fall back to DEFAULT_CATEGORIES
+    }
     if (currentBranch) render();
   });
 
@@ -602,7 +607,22 @@ function initFirebaseListeners() {
     }
 
     _ordersCache = newOrders;
-    _dbReady     = true;
+
+    // ── RESTORE SESSION ON FIRST LOAD ──
+    if (!_dbReady) {
+      _dbReady = true;
+      var savedBranch = localStorage.getItem('wm_session_branch');
+      if (savedBranch && BRANCHES[savedBranch]) {
+        currentBranch  = savedBranch;
+        currentFilter  = 'All';
+        document.getElementById('branchSelector').value = currentBranch;
+        syncMobileSelector(currentBranch);
+        document.getElementById('headerSub').textContent = BRANCHES[currentBranch].name;
+        var lb  = document.getElementById('logoutBtn');       if (lb)  lb.style.display  = 'flex';
+        var mlb = document.getElementById('mobileLogoutBtn'); if (mlb) mlb.style.display = 'block';
+      }
+    }
+
     if (currentBranch) render();
   });
 }
@@ -613,7 +633,10 @@ function saveData(d){
   _ordersCache = d;
   d.forEach(function(o, i) { if (!o._ts) o._ts = Date.now() - i; });
   var obj = {};
-  d.forEach(function(o) { obj[o.id.replace(/[.#$[\]/]/g, '_')] = o; });
+  d.forEach(function(o) {
+    var key = o.id.replace(/[^a-zA-Z0-9_]/g, '_');
+    obj[key] = o;
+  });
   DB.ref('wm_orders').set(obj).catch(function(e){ console.error('Firebase saveData:', e); });
 }
 
@@ -636,16 +659,17 @@ var pendingBranch='';
 
 /* ── CATEGORIES ── */
 function getCategories(){
-  return _catsCache || DEFAULT_CATEGORIES;
+  var src = _catsCache || DEFAULT_CATEGORIES;
+  return JSON.parse(JSON.stringify(src));
 }
 
 /* ── GENERATORS ── */
 function genOrderNumber(branch){
-  var key='wm_ord_seq_'+branch;
-  var n=(parseInt(localStorage.getItem(key)||'0')+1);
-  localStorage.setItem(key,n);
   var prefix={dubai:'DXB',abudhabi:'AUH',sharjah:'SHJ',alain:'AAN'}[branch]||'BR';
-  return prefix+'-'+String(n).padStart(4,'0');
+  // timestamp (last 5 base36 chars) + 2 random chars = no collisions across devices
+  var ts=Date.now().toString(36).toUpperCase().slice(-5);
+  var rnd=Math.random().toString(36).toUpperCase().slice(2,4);
+  return prefix+'-'+ts+rnd;
 }
 function genItemId(){return Math.random().toString(36).slice(2,8);}
 function now(){return new Date().toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});}
@@ -696,6 +720,7 @@ function doLogin(){
     currentBranch=pendingBranch;
     currentFilter='All';
     cartItems=[];
+    localStorage.setItem('wm_session_branch', currentBranch);
     document.getElementById('branchSelector').value=currentBranch;
     syncMobileSelector(currentBranch);
     document.getElementById('headerSub').textContent=b.name;
@@ -725,6 +750,7 @@ function toggleLoginPw(){
 
 function logoutBranch(){
   currentBranch='';currentFilter='All';cartItems=[];pendingBranch='';
+  localStorage.removeItem('wm_session_branch');
   document.getElementById('branchSelector').value='';
   syncMobileSelector('');
   document.getElementById('headerSub').textContent='Branch Portal';
@@ -1125,6 +1151,25 @@ function printOrder(orderId){
     return'<tr><td style="text-align:center;color:#999;font-size:12px">'+(i+1)+'</td><td style="font-weight:500">'+it.name+'</td><td style="font-family:monospace;color:#2c5f8a;font-weight:500">'+it.qty+'</td><td>'+(it.catEmoji||'')+(it.type||'—')+'</td><td>'+(it.priority==='High'?'⚡ High':'Normal')+'</td><td style="color:#999;font-style:italic">'+(it.notes||'—')+'</td></tr>';
   }).join('');
   w.document.write('<!DOCTYPE html><html><head><title>Order '+o.id+'</title><style>body{font-family:\'Segoe UI\',sans-serif;margin:40px;color:#2c2015}h1{font-size:22px;margin-bottom:4px}.meta{font-size:13px;color:#7a6a55;margin-bottom:20px}table{width:100%;border-collapse:collapse;font-size:13px}th{background:#f5f0e8;text-align:left;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#7a6a55;border-bottom:2px solid #d4c9b4}td{padding:7px 10px;border-bottom:1px solid #e8dfd0}tr:last-child td{border-bottom:none}.footer{margin-top:20px;font-size:12px;color:#999;border-top:1px solid #e8dfd0;padding-top:12px}@media print{body{margin:20px}}</style></head><body><h1>☕ Windmill Cafe — Order '+o.id+'</h1><div class="meta"><strong>'+(o.branchName||o.from)+'</strong> &nbsp;|&nbsp; Date: '+(o.date||o.created)+' &nbsp;|&nbsp; Status: '+o.status+'</div><table><thead><tr><th>#</th><th>Item</th><th>Qty</th><th>Category</th><th>Priority</th><th>Note</th></tr></thead><tbody>'+rows+'</tbody></table>'+(o.note?'<div style="margin-top:14px;font-size:13px;color:#7a6a55;font-style:italic;padding:8px 12px;background:#fdf6e3;border-left:3px solid #d4c9b4;border-radius:4px">Note: '+o.note+'</div>':'')+'<div class="footer">Order ID: '+o.id+' &nbsp;·&nbsp; Created: '+o.created+' &nbsp;·&nbsp; '+o.items.length+' item(s)</div><script>window.print();<\/script></body></html>');
+}
+
+/* ── MANUAL REFRESH ── */
+function refreshAllData(){
+  Promise.all([
+    DB.ref('wm_orders').once('value'),
+    DB.ref('wm_branches').once('value'),
+    DB.ref('wm_categories_data').once('value'),
+  ]).then(function(results){
+    var ov=results[0].val();
+    _ordersCache=ov?Object.values(ov).sort(function(a,b){return(b._ts||0)-(a._ts||0);}):[];
+    _branchesCache=results[1].val()||null;
+    BRANCHES=getBranchesWithPasswords();
+    updateBranchSelectors();
+    var cv=results[2].val();
+    _catsCache=(cv&&Array.isArray(cv)&&cv.length)?cv:null;
+    if(currentBranch)render();
+    showToast('Refreshed','All data synced from server','success');
+  }).catch(function(){showToast('Refresh Failed','Could not reach Firebase','');});
 }
 
 /* ── MAIN RENDER ── */
