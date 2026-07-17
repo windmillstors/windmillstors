@@ -718,13 +718,33 @@ function loadDB(){
     return normalizeDB(JSON.parse(raw));
   }catch(e){return defaultData();}
 }
+/* pendingWrites tracks Firebase writes that haven't been confirmed
+   by the server yet. Two things depend on it:
+   1) the beforeunload guard below warns the user not to close/refresh
+      the tab while a save is still in flight (otherwise the write can
+      get cancelled mid-air and the change is lost).
+   2) the realtime listener further down skips applying an incoming
+      server snapshot while we still have an unconfirmed write pending,
+      so a slightly-stale echo can't stomp on a change we just made. */
+var pendingWrites = 0;
 function saveDB(d){
   try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }catch(e){}
-  fbRootRef.set(d).catch(function(e){
+  pendingWrites++;
+  return fbRootRef.set(d).then(function(){
+    pendingWrites--;
+  }).catch(function(e){
+    pendingWrites--;
     console.error('Firebase save failed', e);
-    toast('Sync error','Could not save to the server: '+e.message,'error');
+    toast('Sync error','Could not save to the server: '+e.message+' — please stay on this page and try again, or your last change may be lost.','error');
   });
 }
+window.addEventListener('beforeunload', function(e){
+  if(pendingWrites>0){
+    e.preventDefault();
+    e.returnValue='Still saving your last change — leaving now may lose it.';
+    return e.returnValue;
+  }
+});
 
 /* ── ARCHIVE AUTO-PURGE ──
    Orders sitting in the Archive tab for more than 60 days are
@@ -963,6 +983,16 @@ fbRootRef.on('value', function(snapshot){
       lastOrderSnapshot=snapshotOrders();
       renderRoot();
     }
+    return;
+  }
+  if(pendingWrites>0){
+    // We have a save of our own still in flight to the server.
+    // This incoming snapshot is either our own write echoing back
+    // (in which case a later 'value' event will re-fire once it's
+    // truly settled) or another device's older read racing with
+    // ours — either way, applying it now risks clobbering the
+    // change we just made locally. Skip it; once pendingWrites
+    // drops back to 0 our own confirmed data is already correct.
     return;
   }
   var oldSnap=lastOrderSnapshot;
