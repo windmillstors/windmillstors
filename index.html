@@ -111,6 +111,11 @@ button{font-family:inherit;}
 @media(max-width:520px){.frow{grid-template-columns:1fr;}}
 .frow3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
 @media(max-width:520px){.frow3{grid-template-columns:1fr 1fr;}}
+.eo-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;align-items:end;margin-bottom:10px;}
+@media(max-width:520px){.eo-row{grid-template-columns:1fr 1fr;}}
+.eo-del-btn{background:var(--danger-bg);color:var(--danger);border:1px solid #f0c6c6;border-radius:var(--radius-sm);width:38px;height:38px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:15px;flex-shrink:0;}
+.eo-del-btn:hover{background:var(--danger);color:#fff;}
+.eo-empty{text-align:center;color:var(--muted);font-size:13px;padding:14px 0;}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
 .chip{border:1px solid var(--line2);background:var(--paper);border-radius:20px;padding:5px 12px;font-size:12.5px;cursor:pointer;transition:all .12s;}
 .chip:hover{border-color:var(--teal);color:var(--teal);background:var(--teal-bg);}
@@ -566,7 +571,7 @@ table.rtable tr:hover td{background:var(--paper);}
     </div>
     <div class="field"><label>Item Name</label><input class="finput" id="cim_name" placeholder="Item name"></div>
     <div class="frow3">
-      <div class="field"><label>Quantity</label><input class="finput" id="cim_qty" placeholder="e.g. 10"></div>
+      <div class="field"><label>Quantity</label><input class="finput" id="cim_qty" placeholder="e.g. 10" inputmode="decimal" oninput="this.value=this.value.replace(/[^0-9.]/g,'').replace(/(\..*)\./g,'$1')"></div>
       <div class="field"><label>Unit</label><select class="fselect" id="cim_unit"></select></div>
       <div class="field"><label>Priority</label><select class="fselect" id="cim_priority"><option>Normal</option><option value="High">Urgent</option></select></div>
     </div>
@@ -641,14 +646,14 @@ table.rtable tr:hover td{background:var(--paper);}
   </div>
 </div>
 <div class="modal-bg" id="editOrderModal">
-  <div class="modal" style="max-width:560px">
-    <div class="modal-head">
+  <div class="modal" style="max-width:560px;max-height:88vh;display:flex;flex-direction:column;">
+    <div class="modal-head" style="flex-shrink:0">
       <div class="modal-title">Edit Request</div>
       <div class="modal-sub" id="editOrderSub">Update items before confirming</div>
     </div>
-    <div id="editOrderBody"></div>
-    <button class="btn btn-primary btn-block" onclick="saveEditOrder()">Save Changes</button>
-    <button class="btn btn-outline btn-block" style="margin-top:8px" onclick="closeModal('editOrderModal')">Cancel</button>
+    <div id="editOrderBody" style="overflow-y:auto;flex:1;margin-bottom:1rem;"></div>
+    <button class="btn btn-primary btn-block" style="flex-shrink:0" onclick="saveEditOrder()">Save Changes</button>
+    <button class="btn btn-outline btn-block" style="margin-top:8px;flex-shrink:0" onclick="closeModal('editOrderModal')">Cancel</button>
   </div>
 </div>
 
@@ -1102,7 +1107,7 @@ function renderBranch(b){
     Sent:myOrders.filter(function(o){return o.status==='Sent';}).length,
     Received:myOrders.filter(function(o){return o.status==='Received';}).length
   };
-  var filtered = branchFilter==='All'?myOrders:myOrders.filter(function(o){return o.status===branchFilter;});
+  var filtered = branchFilter==='All'?myOrders.filter(function(o){return o.status!=='Received';}):myOrders.filter(function(o){return o.status===branchFilter;});
 
   var catOptions='<option value="">— Select Category —</option>'
     +DB.categories.map(function(c){return '<option value="'+c.id+'">'+esc(c.emoji||'')+' '+esc(c.name)+'</option>';}).join('');
@@ -1132,7 +1137,7 @@ function renderBranch(b){
             +'</div>'
           +'</div>'
           +'<div class="frow3">'
-            +'<div class="field"><label>Quantity</label><input class="finput" id="ci_qty" placeholder="e.g. 10" onkeydown="if(event.key===\'Enter\'){event.preventDefault();addToCart();}"></div>'
+            +'<div class="field"><label>Quantity</label><input class="finput" id="ci_qty" placeholder="e.g. 10" inputmode="decimal" oninput="this.value=this.value.replace(/[^0-9.]/g,\'\').replace(/(\\..*)\\./g,\'$1\')" onkeydown="if(event.key===\'Enter\'){event.preventDefault();addToCart();}"></div>'
             +'<div class="field"><label>Unit</label><select class="fselect" id="ci_unit">'+unitSelectOptions('')+'</select></div>'
             +'<div class="field"><label>Priority</label><select class="fselect" id="ci_priority"><option>Normal</option><option value="High">Urgent</option></select></div>'
           +'</div>'
@@ -1914,7 +1919,7 @@ function openMarkReceivedModal(id){
     return '<div class="rcv-item">'
       +'<div class="rcv-item-top"><span class="rcv-item-name">'+esc(it.name)+'</span><span class="rcv-item-ordered">Ordered: '+esc(it.qty)+(it.unit?' '+esc(it.unit):'')+'</span></div>'
       +'<div class="rcv-item-row2">'
-        +'<input type="text" id="rcv_qty_'+idx+'" value="'+esc(it.qty)+'" placeholder="Actual qty received">'
+        +'<input type="text" id="rcv_qty_'+idx+'" value="'+esc(it.qty)+'" placeholder="Actual qty received" inputmode="decimal" oninput="this.value=this.value.replace(/[^0-9.]/g,\'\').replace(/(\\..*)\\./g,\'$1\')">'
         +'<label class="rcv-issue-lbl"><input type="checkbox" id="rcv_issue_'+idx+'" onchange="toggleRcvIssue('+idx+')"> Flag issue</label>'
       +'</div>'
       +'<div class="rcv-issue-note" id="rcv_issue_note_wrap_'+idx+'" style="display:none"><input type="text" id="rcv_issue_note_'+idx+'" placeholder="What\'s wrong? e.g. damaged packaging, short by 2kg"></div>'
@@ -1987,34 +1992,60 @@ function confirmDeleteOrder(id){
 }
 
 var editingOrderId=null;
+var editingOrderItems=[];
 function openEditOrderModal(id){
   var o=DB.orders.find(function(x){return x.id===id;});
   if(!o)return;
   editingOrderId=id;
+  editingOrderItems=o.items.map(function(it){
+    var copy={}; for(var k in it){copy[k]=it[k];} return copy;
+  });
   var b=getBranch(o.branchId);
   document.getElementById('editOrderSub').textContent=o.id+' · '+(b?b.name:'Unknown branch');
-  var rows=o.items.map(function(it,idx){
-    return '<div class="frow3" style="margin-bottom:10px">'
+  renderEditOrderRows(o.note||'');
+  openModal('editOrderModal');
+}
+function syncEditOrderInputs(){
+  editingOrderItems.forEach(function(it,idx){
+    var nameInp=document.getElementById('eo_name_'+idx);
+    var qtyInp=document.getElementById('eo_qty_'+idx);
+    var unitInp=document.getElementById('eo_unit_'+idx);
+    if(nameInp)it.name=nameInp.value.trim();
+    if(qtyInp)it.qty=qtyInp.value.trim();
+    if(unitInp)it.unit=unitInp.value;
+  });
+}
+function renderEditOrderRows(noteVal){
+  var noteInp=document.getElementById('eo_note');
+  if(noteVal===undefined)noteVal=noteInp?noteInp.value:'';
+  var rows=editingOrderItems.map(function(it,idx){
+    return '<div class="eo-row">'
       +'<div class="field" style="margin-bottom:0"><label>Item '+(idx+1)+'</label><input class="finput" id="eo_name_'+idx+'" value="'+esc(it.name)+'"></div>'
-      +'<div class="field" style="margin-bottom:0"><label>Qty</label><input class="finput" id="eo_qty_'+idx+'" value="'+esc(it.qty)+'"></div>'
+      +'<div class="field" style="margin-bottom:0"><label>Qty</label><input class="finput" id="eo_qty_'+idx+'" value="'+esc(it.qty)+'" inputmode="decimal" oninput="this.value=this.value.replace(/[^0-9.]/g,\'\').replace(/(\\..*)\\./g,\'$1\')"></div>'
       +'<div class="field" style="margin-bottom:0"><label>Unit</label><select class="fselect" id="eo_unit_'+idx+'">'+unitSelectOptions(it.unit||'')+'</select></div>'
+      +'<button type="button" class="eo-del-btn" title="Remove item" onclick="removeEditOrderItem('+idx+')">🗑</button>'
     +'</div>';
   }).join('');
+  if(!rows)rows='<div class="eo-empty">No items left — add at least one before saving.</div>';
   document.getElementById('editOrderBody').innerHTML = rows
-    +'<div class="field"><label>Order Note</label><input class="finput" id="eo_note" value="'+esc(o.note||'')+'"></div>';
-  openModal('editOrderModal');
+    +'<div class="field"><label>Order Note</label><input class="finput" id="eo_note" value="'+esc(noteVal)+'"></div>';
+}
+function removeEditOrderItem(idx){
+  syncEditOrderInputs();
+  var noteInp=document.getElementById('eo_note');
+  var noteVal=noteInp?noteInp.value:'';
+  editingOrderItems.splice(idx,1);
+  renderEditOrderRows(noteVal);
 }
 function saveEditOrder(){
   var o=DB.orders.find(function(x){return x.id===editingOrderId;});
   if(!o)return;
-  o.items.forEach(function(it,idx){
-    var nameInp=document.getElementById('eo_name_'+idx);
-    var qtyInp=document.getElementById('eo_qty_'+idx);
-    var unitInp=document.getElementById('eo_unit_'+idx);
-    if(nameInp && nameInp.value.trim())it.name=nameInp.value.trim();
-    if(qtyInp && qtyInp.value.trim())it.qty=qtyInp.value.trim();
-    if(unitInp)it.unit=unitInp.value;
-  });
+  syncEditOrderInputs();
+  if(!editingOrderItems.length){
+    toast('Cannot save','A request needs at least one item','error');
+    return;
+  }
+  o.items=editingOrderItems;
   var noteInp=document.getElementById('eo_note');
   if(noteInp)o.note=noteInp.value.trim();
   saveDB(DB);
