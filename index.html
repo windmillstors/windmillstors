@@ -1128,7 +1128,7 @@ function renderBranch(b){
           +'<div class="field">'
             +'<label>Item Name *</label>'
             +'<div class="name-input-wrap">'
-              +'<input class="finput" id="ci_name" placeholder="Select from list or type custom..." autocomplete="off"'
+              +'<input class="finput" id="ci_name" placeholder="Select an item from the list..." autocomplete="off"'
                 +' oninput="showNameSuggestions(this.value)"'
                 +' onfocus="showNameSuggestions(this.hasAttribute(\'readonly\')?\'\':this.value)"'
                 +' onkeydown="handleNameKeydown(event)">'
@@ -1200,7 +1200,7 @@ function showNameSuggestions(val){
   var pool=selectedCatId?all.filter(function(i){return i.catId===selectedCatId;}):all;
   var filtered=val?pool.filter(function(i){return i.name.toLowerCase().indexOf(val.toLowerCase())!==-1;}):pool;
   if(!filtered.length){
-    drop.innerHTML='<div class="name-sugg-empty">'+(val?'No matches — will add as custom item':'No items in this category yet')+'</div>';
+    drop.innerHTML='<div class="name-sugg-empty">'+(val?'No matching items — please select from the list':'No items in this category yet')+'</div>';
     drop.classList.add('open');
     return;
   }
@@ -1275,12 +1275,14 @@ document.addEventListener('click',function(e){
 var orderNoteVal='';
 function addToCart(){
   var catId=document.getElementById('ci_cat').value;
-  var name=document.getElementById('ci_name').value.trim();
+  var nameInpEl=document.getElementById('ci_name');
+  var name=nameInpEl.value.trim();
   var qty=document.getElementById('ci_qty').value.trim();
   var unit=document.getElementById('ci_unit').value;
   var priority=document.getElementById('ci_priority').value;
   var note=document.getElementById('ci_note').value.trim();
-  if(!name){toast('Missing item name','Please type or select an item.','error');return;}
+  if(!name){toast('Missing item name','Please select an item from the list.','error');return;}
+  if(!nameInpEl.hasAttribute('readonly')){toast('Select from list','Custom items aren\'t allowed — please pick an item from the suggestions.','error');showNameSuggestions(name);return;}
   if(!qty){toast('Missing quantity','Please enter a quantity.','error');return;}
   cart.push({id:uid('itm'), catId:catId, catName:catId?getCat(catId).name:'', catEmoji:catId?(getCat(catId).emoji||''):'', name:name, qty:qty, unit:unit, priority:priority, note:note});
   var nameInp=document.getElementById('ci_name');
