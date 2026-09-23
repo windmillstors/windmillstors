@@ -488,6 +488,7 @@ table.rtable tr:hover td{background:var(--paper);}
       <div class="modal-sub">Set a name, pick a logo &amp; password</div>
     </div>
     <div class="field"><label>Branch Name</label><input class="finput" id="bm_name" placeholder="e.g. Dubai Branch"></div>
+    <div class="field"><label>Branch Code (for order numbers)</label><input class="finput" id="bm_code" maxlength="5" placeholder="e.g. DXB" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')"><div class="card-note" style="margin-top:4px">2–5 letters/numbers. Order numbers look like <b>DXB-230926-001</b>. Leave empty to use the first 3 letters of the name.</div></div>
     <div class="field">
       <label>Branch Logo</label>
       <div class="logo-grid" id="bm_logoGrid"></div>
@@ -703,7 +704,7 @@ function normalizeDB(d){
   if(!d)return defaultData();
   if(!d.branches)d.branches=[];
   if(!d.categories)d.categories=[];
-  if(!d.orders)d.orders=[];
+  d.orders=toOrderArray(d.orders);
   if(!d.units || !d.units.length)d.units=['Kg','g','PCS','Selling Items','Bar Items'];
   if(!d.adminPassword)d.adminPassword='admin123';
   d.orders.forEach(function(o){
@@ -731,15 +732,97 @@ function loadDB(){
    2) the realtime listener further down skips applying an incoming
       server snapshot while we still have an unconfirmed write pending,
       so a slightly-stale echo can't stomp on a change we just made. */
+var APP_VERSION = 3; // bump when a new version must replace all open copies
 var pendingWrites = 0;
-function saveDB(d){
+/* FIX (lost/deleted orders): the old saveDB did fbRootRef.set(wholeDB),
+   so any device holding a slightly out-of-date copy (e.g. admin's phone
+   that hadn't received the Dubai order yet) wiped other devices' new
+   orders when it saved. Now we only send what THIS device changed,
+   and orders are merged by id inside a Firebase transaction, so
+   concurrent saves from different branches can never erase each other. */
+var serverBase = null; // last data we know the server had (deep copy)
+function deepCopy(x){ return x==null?x:JSON.parse(JSON.stringify(x)); }
+function stableStr(x){
+  if(x===null||typeof x!=='object')return JSON.stringify(x===undefined?null:x);
+  if(Array.isArray(x))return '['+x.map(stableStr).join(',')+']';
+  return '{'+Object.keys(x).sort().filter(function(k){return x[k]!==undefined;}).map(function(k){return JSON.stringify(k)+':'+stableStr(x[k]);}).join(',')+'}';
+}
+function toOrderArray(v){
+  if(!v)return [];
+  var arr=Array.isArray(v)?v:Object.keys(v).map(function(k){return v[k];});
+  return arr.filter(function(o){return o && o.id;});
+}
+var appOutdated=false;
+var versionBumped=false;
+function showOutdatedScreen(){
+  appOutdated=true;
+  document.body.innerHTML='<div style="font-family:sans-serif;max-width:420px;margin:80px auto;padding:24px;text-align:center">'
+    +'<h2>New version available</h2><p>This page is an old copy of the app. To keep orders safe it can no longer save.</p>'
+    +'<button style="padding:12px 24px;font-size:16px;border-radius:8px;border:0;background:#1f2d3d;color:#fff" onclick="location.reload(true)">Reload now</button></div>';
+}
+function saveDB(d, onFail){
+  if(appOutdated)return Promise.resolve();
   try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }catch(e){}
+  var base = serverBase || {};
+  var baseOrders={}; toOrderArray(base.orders).forEach(function(o){baseOrders[o.id]=stableStr(o);});
+  var curOrders={}; (d.orders||[]).forEach(function(o){ if(o&&o.id)curOrders[o.id]=o; });
+  var baseObjs={}; toOrderArray(base.orders).forEach(function(o){baseObjs[o.id]=o;});
+  var upserts={}, fieldChanges={}, removals={}, hasOrderChange=false;
+  Object.keys(curOrders).forEach(function(id){
+    if(baseOrders[id]===stableStr(curOrders[id]))return;
+    hasOrderChange=true;
+    var full=deepCopy(curOrders[id]);
+    if(!(id in baseOrders)){ upserts[id]=full; return; } // brand-new order
+    // existing order: only send the fields THIS device changed, so a
+    // change made on another device at the same time is not wiped out
+    var old=baseObjs[id], ch={};
+    Object.keys(full).concat(Object.keys(old)).forEach(function(k){
+      if(stableStr(full[k])!==stableStr(old[k])) ch[k]=(k in full)?full[k]:null;
+    });
+    fieldChanges[id]=ch;
+  });
+  Object.keys(baseOrders).forEach(function(id){
+    if(!(id in curOrders)){ removals[id]=true; hasOrderChange=true; }
+  });
+  var otherUpdates={}, hasOther=false;
+  Object.keys(d).forEach(function(k){
+    if(k==='orders'||k==='counters'||k==='appMeta')return;
+    if(stableStr(d[k])!==stableStr(base[k])){ otherUpdates[k]=deepCopy(d[k]); hasOther=true; }
+  });
+  serverBase = deepCopy(d);
+  var jobs=[];
+  if(hasOther) jobs.push(fbRootRef.update(otherUpdates));
+  if(hasOrderChange){
+    jobs.push(fbRootRef.child('orders').transaction(function(cur){
+      var list=toOrderArray(cur).filter(function(o){return !removals[o.id];});
+      var seen={};
+      list=list.map(function(o){
+        if(seen[o.id])return o; seen[o.id]=true;
+        if(fieldChanges[o.id]){
+          var m=deepCopy(o), ch=fieldChanges[o.id];
+          Object.keys(ch).forEach(function(k){ if(ch[k]===null)delete m[k]; else m[k]=ch[k]; });
+          return m;
+        }
+        return o;
+      });
+      // new orders are added (never overwriting an existing one with the same id);
+      // edited orders that another device deleted meanwhile are NOT brought back
+      Object.keys(upserts).forEach(function(id){ if(!seen[id])list.push(upserts[id]); });
+      return list;
+    }));
+  }
+  if(!jobs.length) return Promise.resolve();
   pendingWrites++;
-  return fbRootRef.set(d).then(function(){
+  return Promise.all(jobs).then(function(res){
+    res.forEach(function(r){ if(r && r.committed===false) throw new Error('save was not committed'); });
+  }).then(function(){
     pendingWrites--;
-  }).catch(function(e){
+  },function(e){
     pendingWrites--;
     console.error('Firebase save failed', e);
+    if(onFail)onFail(e);
+    throw e;
+  }).catch(function(e){
     toast('Sync error','Could not save to the server: '+e.message+' — please stay on this page and try again, or your last change may be lost.','error');
   });
 }
@@ -751,31 +834,12 @@ window.addEventListener('beforeunload', function(e){
   }
 });
 
-/* ── ARCHIVE AUTO-PURGE ──
-   Orders sitting in the Archive tab for more than 60 days are
-   permanently deleted automatically (no way to recover them). */
-var ARCHIVE_MAX_DAYS=60;
-function purgeOldArchives(d){
-  var cutoff=Date.now()-(ARCHIVE_MAX_DAYS*24*60*60*1000);
-  var before=d.orders.length;
-  d.orders=d.orders.filter(function(o){
-    if(!o.archived)return true;
-    if(o.archivedAt==null)return true; // safety: keep if we somehow don't know when it was archived
-    return o.archivedAt>=cutoff;
-  });
-  return before-d.orders.length;
-}
+/* Archive auto-delete REMOVED: archived orders are kept forever
+   (only deleted when an admin presses Delete). */
 
 var DB = loadDB();
-(function(){
-  // Only tidy up the local cache here — do NOT push to Firebase yet,
-  // since we haven't read the real server data at this point and
-  // would risk overwriting it with a stale local copy. The realtime
-  // listener below re-runs this purge against the real server data
-  // once it arrives.
-  var removed=purgeOldArchives(DB);
-  if(removed>0){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); }catch(e){} }
-})();
+serverBase = deepCopy(DB);
+
 
 /* ══════════════════════════════════════════════════════════
    STATE
@@ -841,7 +905,13 @@ function toast(title,msg,type){
   setTimeout(function(){t.remove();},4200);
 }
 function openModal(id){document.getElementById(id).classList.add('open');}
-function closeModal(id){document.getElementById(id).classList.remove('open');}
+function closeModal(id){
+  document.getElementById(id).classList.remove('open');
+  if(id==='confirmModal'){ // reset so the next dialog never shows a leftover label/action
+    var cb=document.getElementById('confirmBtn');
+    cb.onclick=null; cb.textContent='Delete'; cb.className='btn btn-danger btn-block';
+  }
+}
 function togglePw(id,btn){
   var inp=document.getElementById(id);
   if(inp.type==='password'){inp.type='text';btn.textContent='🙈';}
@@ -849,11 +919,37 @@ function togglePw(id,btn){
 }
 function getBranch(id){return DB.branches.find(function(b){return b.id===id;});}
 function getCat(id){return DB.categories.find(function(c){return c.id===id;});}
-function orderNumber(branchId){
-  var b=getBranch(branchId);
-  var prefix=(b?b.name:'BR').replace(/[^A-Za-z]/g,'').slice(0,3).toUpperCase()||'BRN';
-  var ts=Date.now().toString(36).toUpperCase().slice(-5);
-  return prefix+'-'+ts;
+/* ── ORDER / INVOICE NUMBERS ──
+   Format: BRANCHCODE-DDMMYY-NNN  e.g. TAW-230926-001
+   The running number (NNN) comes from an atomic counter on the
+   server (windmill/counters/TAW-230926), so two devices can never
+   get the same number, even when sending at the same second. */
+function branchCode(b){
+  if(b && b.code) return String(b.code).toUpperCase();
+  return (b?b.name:'BR').replace(/[^A-Za-z]/g,'').slice(0,3).toUpperCase()||'BRN';
+}
+function datePart(ts){
+  var d=new Date(ts);
+  return String(d.getDate()).padStart(2,'0')+String(d.getMonth()+1).padStart(2,'0')+String(d.getFullYear()).slice(-2);
+}
+function nextOrderNumber(branchId){
+  var key=branchCode(getBranch(branchId))+'-'+datePart(Date.now());
+  // highest number already used locally for this key (safety floor)
+  var localMax=0;
+  DB.orders.forEach(function(o){
+    if(o && typeof o.id==='string' && o.id.indexOf(key+'-')===0){
+      var n=parseInt(o.id.slice(key.length+1),10);
+      if(n>localMax)localMax=n;
+    }
+  });
+  return fbRootRef.child('counters').child(key).transaction(function(cur){
+    return Math.max(cur||0, localMax)+1;
+  }).then(function(res){
+    if(!res.committed)throw new Error('Could not reserve an order number');
+    var id=key+'-'+String(res.snapshot.val()).padStart(3,'0');
+    if(DB.orders.some(function(o){return o.id===id;}))throw new Error('Order number clash, please press Send again');
+    return id;
+  });
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -984,27 +1080,24 @@ fbRootRef.on('value', function(snapshot){
     // whatever we have locally (or the built-in demo data).
     if(!fbInitialLoadDone){
       fbInitialLoadDone=true;
-      saveDB(DB);
+      serverBase=deepCopy(DB);
+      var seed=deepCopy(DB); seed.appMeta={minVersion:APP_VERSION};
+      fbRootRef.update(seed);
       lastOrderSnapshot=snapshotOrders();
       renderRoot();
     }
     return;
   }
-  if(pendingWrites>0){
-    // We have a save of our own still in flight to the server.
-    // This incoming snapshot is either our own write echoing back
-    // (in which case a later 'value' event will re-fire once it's
-    // truly settled) or another device's older read racing with
-    // ours — either way, applying it now risks clobbering the
-    // change we just made locally. Skip it; once pendingWrites
-    // drops back to 0 our own confirmed data is already correct.
-    return;
-  }
+  // (Old code skipped snapshots while our own save was in flight, which
+  // could hide another branch's new order and later overwrite it.
+  // Saves are now merged per-order, so every snapshot is applied.)
   var oldSnap=lastOrderSnapshot;
+  var meta=data.appMeta||{};
+  if((meta.minVersion||0)>APP_VERSION){ showOutdatedScreen(); return; }
+  if((meta.minVersion||0)<APP_VERSION && !versionBumped){ versionBumped=true; fbRootRef.child('appMeta').update({minVersion:APP_VERSION}); }
   DB=normalizeDB(data);
-  var purged=purgeOldArchives(DB);
+  serverBase=deepCopy(DB);
   try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); }catch(e){}
-  if(purged>0) saveDB(DB);
   var newSnap=snapshotOrders();
   if(fbInitialLoadDone){
     if(session && session.role==='admin'){
@@ -1393,26 +1486,56 @@ function renderOrderPreview(){
   +'</div>';
 }
 
+var sendingOrder=false;
 function sendOrder(){
   if(!session||session.role!=='branch')return;
-  if(!cart.length)return;
-  var order={
-    id:orderNumber(session.branchId),
-    branchId:session.branchId,
-    items:cart,
-    note:orderNoteVal.trim(),
-    status:'Pending',
-    ts:Date.now(),
-    archived:false
-  };
-  DB.orders.push(order);
-  saveDB(DB);
-  lastOrderSnapshot=snapshotOrders();
-  cart=[];
-  orderNoteVal='';
-  toast('Request Sent ✓', order.id+' sent to Main Branch','success');
-  pushNotify('Request sent ✓', order.id+' was sent to Main Branch','order-'+order.id);
-  renderBranch(getBranch(session.branchId));
+  if(!cart.length||sendingOrder)return;
+  if(!navigator.onLine){toast('No internet','Connect to the internet to send the request. Your list is kept.','error');return;}
+  sendingOrder=true;
+  var sb=document.getElementById('sendBtn');
+  if(sb){sb.disabled=true;sb.textContent='Sending…';}
+  var branchId=session.branchId;
+  var timer=setTimeout(function(){ if(sendingOrder){sendingOrder=false;renderBranch(getBranch(branchId));toast('Slow connection','Could not get an order number from the server. Your list is kept, please try again.','error');} },15000);
+  nextOrderNumber(branchId).then(function(id){
+    if(!sendingOrder)return; // timed out already
+    clearTimeout(timer);
+    var order={
+      id:id,
+      branchId:branchId,
+      items:cart,
+      note:orderNoteVal.trim(),
+      status:'Pending',
+      ts:Date.now(),
+      archived:false
+    };
+    DB.orders.push(order);
+    var sentCart=cart, sentNote=orderNoteVal;
+    cart=[];
+    orderNoteVal='';
+    if(sb){sb.disabled=true;sb.textContent='Saving…';}
+    var failed=false;
+    saveDB(DB,function(){
+      failed=true; sendingOrder=false;
+      DB.orders=DB.orders.filter(function(o){return o.id!==order.id;});
+      serverBase && (serverBase.orders=toOrderArray(serverBase.orders).filter(function(o){return o.id!==order.id;}));
+      cart=sentCart; orderNoteVal=sentNote;
+      renderBranch(getBranch(branchId));
+    }).then(function(){
+      sendingOrder=false;
+      if(failed)return;
+      lastOrderSnapshot=snapshotOrders();
+      toast('Request Sent ✓', order.id+' saved on the server','success');
+      pushNotify('Request sent ✓', order.id+' was sent to Main Branch','order-'+order.id);
+      renderBranch(getBranch(branchId));
+    });
+    renderBranch(getBranch(branchId));
+  }).catch(function(e){
+    clearTimeout(timer);
+    sendingOrder=false;
+    console.error(e);
+    toast('Not sent',(e&&e.message?e.message:'Error')+' — your list is kept, please try again.','error');
+    renderBranch(getBranch(branchId));
+  });
 }
 
 function renderTicket(o){
@@ -1639,11 +1762,85 @@ function buildControlCenter(){
     +'</div>'
     +'<div class="field" style="margin-bottom:14px"><input class="finput" id="ccSearchInput" placeholder="🔍 Search by order ID or item name…" value="'+esc(ccSearchQuery)+'" oninput="handleCcSearchInput(this.value)"></div>'
     +'<div class="pills" style="margin-bottom:14px">'+pillsHtml+'</div>'
+    +(ccStatusFilter==='Archived'?buildMonthDeleteBox(branchScopedArchived):'')
     +bulkBarHtml
     +listHtml
   +'</div>';
 
   return topBarHtml+statsHtml+'<div class="cc-grid">'+leftCol+rightCol+'</div>';
+}
+
+/* ── MANUAL DELETE BY MONTH (Archive only) ──
+   Admin picks a month and permanently deletes that month's ARCHIVED
+   orders (active orders are never touched). Respects the branch filter. */
+var monthDelKey='';
+function archivedMonthCounts(list){
+  var m={};
+  list.forEach(function(o){var k=monthKey(o.ts);m[k]=(m[k]||0)+1;});
+  return m;
+}
+function buildMonthDeleteBox(archivedList){
+  var counts=archivedMonthCounts(archivedList);
+  var keys=Object.keys(counts).sort().reverse();
+  if(!keys.length)return '';
+  if(keys.indexOf(monthDelKey)===-1)monthDelKey=keys[keys.length-1]; // default: oldest month
+  var b=ccBranchFilter==='All'?null:getBranch(ccBranchFilter);
+  var opts=keys.map(function(k){return '<option value="'+k+'"'+(k===monthDelKey?' selected':'')+'>'+monthLabel(k)+' — '+counts[k]+' order'+(counts[k]!==1?'s':'')+'</option>';}).join('');
+  return '<div style="border:1px dashed var(--danger);border-radius:10px;padding:12px 14px;margin-bottom:14px;background:var(--danger-bg)">'
+    +'<div style="font-weight:700;font-size:13px;color:var(--danger);margin-bottom:8px">🗑 Delete archive by month'+(b?' — '+esc(b.name):' — all branches')+'</div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">'
+      +'<select class="fselect" style="flex:1;min-width:180px" onchange="monthDelKey=this.value">'+opts+'</select>'
+      +'<button class="btn btn-outline" onclick="exportMonthCsv()">⬇ Download first</button>'
+      +'<button class="btn btn-danger" onclick="confirmDeleteMonth()">🗑 Delete month</button>'
+    +'</div>'
+    +'<div class="card-note" style="margin-top:6px">Only archived orders are deleted. Pending / Processing / Sent / Received orders are never touched.</div>'
+  +'</div>';
+}
+function monthDeleteTargets(){
+  return DB.orders.filter(function(o){
+    return o.archived && monthKey(o.ts)===monthDelKey && (ccBranchFilter==='All' || o.branchId===ccBranchFilter);
+  });
+}
+function exportMonthCsv(){
+  var list=monthDeleteTargets();
+  if(!list.length){toast('Nothing to export','No archived orders in that month.','error');return;}
+  var rows=[['Order ID','Branch','Category','Item','Ordered Qty','Received Qty','Unit','Priority','Status','Date']];
+  list.forEach(function(o){
+    var b=getBranch(o.branchId);
+    o.items.forEach(function(it){
+      rows.push([o.id, b?b.name:'', it.catName||'—', it.name, it.qty, (it.receivedQty!==undefined?it.receivedQty:''), it.unit||'', it.priority, o.status, fmtDate(o.ts)]);
+    });
+  });
+  var csv=rows.map(function(r){return r.map(function(v){return '"'+String(v==null?'':v).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
+  var url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  var a=document.createElement('a');
+  a.href=url;a.download='windmill_archive_'+monthDelKey+(ccBranchFilter==='All'?'':'_'+ccBranchFilter)+'.csv';a.click();
+  URL.revokeObjectURL(url);
+  toast('Exported',monthLabel(monthDelKey)+' downloaded as CSV','success');
+}
+function confirmDeleteMonth(){
+  var list=monthDeleteTargets();
+  if(!list.length){toast('Nothing to delete','No archived orders in that month.','error');return;}
+  var key=monthDelKey, branchId=ccBranchFilter;
+  var b=branchId==='All'?null:getBranch(branchId);
+  document.getElementById('confirmMsg').textContent='Permanently delete '+list.length+' archived order'+(list.length!==1?'s':'')+' from '+monthLabel(key)+(b?' ('+b.name+')':' (all branches)')+'? This cannot be undone. Tip: press "Download first" to keep a copy.';
+  var btn=document.getElementById('confirmBtn');
+  btn.textContent='🗑 Delete '+list.length+' order'+(list.length!==1?'s':'');
+  btn.className='btn btn-danger btn-block';
+  btn.onclick=function(){
+    var ids={};
+    DB.orders.forEach(function(o){
+      if(o.archived && monthKey(o.ts)===key && (branchId==='All'||o.branchId===branchId))ids[o.id]=true;
+    });
+    var n=Object.keys(ids).length;
+    DB.orders=DB.orders.filter(function(o){return !ids[o.id];});
+    Object.keys(ids).forEach(function(id){delete ccSelectedIds[id];});
+    saveDB(DB);
+    closeModal('confirmModal');
+    renderAdmin();
+    toast('Deleted', n+' archived order'+(n!==1?'s':'')+' from '+monthLabel(key)+' removed','');
+  };
+  openModal('confirmModal');
 }
 
 function handleCcSearchInput(val){
@@ -1839,8 +2036,11 @@ function confirmSplitOrder(){
   o.rootId=rootId;
   o.items=keptItems;
   var siblingCount=DB.orders.filter(function(x){return x.rootId===rootId;}).length;
+  var newId, n=siblingCount;
+  do{ newId=rootId+'-'+(n<26?String.fromCharCode(65+n):'X'+n); n++; }
+  while(DB.orders.some(function(x){return x.id===newId;}));
   var newOrder={
-    id: rootId+'-'+String.fromCharCode(65+siblingCount),
+    id: newId,
     branchId:o.branchId,
     items:movedItems,
     note:o.note,
@@ -1968,6 +2168,8 @@ function confirmCancelOrder(id){
   btn.textContent='✕ Cancel Request';
   btn.className='btn btn-danger btn-block';
   btn.onclick=function(){
+    var o=DB.orders.find(function(x){return x.id===id;});
+    if(!o){closeModal('confirmModal');return;}
     o.status='Cancelled';
     saveDB(DB);
     closeModal('confirmModal');
@@ -2141,6 +2343,8 @@ function confirmClearBranch(id){
   var count=DB.orders.filter(function(o){return o.branchId===id && !o.archived && (o.status==='Sent'||o.status==='Received');}).length;
   if(!count)return;
   document.getElementById('confirmMsg').textContent='Archive '+count+' completed request'+(count!==1?'s':'')+' for "'+b.name+'"? They\'ll move to the Archive tab and still count in the Full Report.';
+  document.getElementById('confirmBtn').textContent='📦 Archive '+count;
+  document.getElementById('confirmBtn').className='btn btn-teal btn-block';
   document.getElementById('confirmBtn').onclick=function(){
     DB.orders.forEach(function(o){
       if(o.branchId===id && !o.archived && (o.status==='Sent'||o.status==='Received')){ o.archived=true; o.archivedAt=Date.now(); }
@@ -2478,6 +2682,7 @@ function openAddBranch(){
   editingBranchId=null;
   document.getElementById('branchModalTitle').textContent='Add Branch';
   document.getElementById('bm_name').value='';
+  document.getElementById('bm_code').value='';
   document.getElementById('bm_emoji').value=BRANCH_LOGOS[0];
   document.getElementById('bm_pw').value='';
   renderLogoPicker(BRANCH_LOGOS[0]);
@@ -2488,6 +2693,7 @@ function openEditBranch(id){
   var b=getBranch(id);
   document.getElementById('branchModalTitle').textContent='Edit Branch';
   document.getElementById('bm_name').value=b.name;
+  document.getElementById('bm_code').value=b.code||branchCode(b);
   document.getElementById('bm_emoji').value=b.emoji||BRANCH_LOGOS[0];
   document.getElementById('bm_pw').value=b.password;
   renderLogoPicker(b.emoji||BRANCH_LOGOS[0]);
@@ -2498,12 +2704,17 @@ function saveBranchModal(){
   var emoji=document.getElementById('bm_emoji').value.trim()||BRANCH_LOGOS[0];
   var pw=document.getElementById('bm_pw').value.trim();
   if(!name||!pw){toast('Missing info','Name and password are required.','error');return;}
+  var code=document.getElementById('bm_code').value.trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+  if(!code)code=branchCode({name:name});
+  if(code.length<2){toast('Branch code too short','Use 2–5 letters or numbers.','error');return;}
+  var clash=DB.branches.find(function(x){return x.id!==editingBranchId && branchCode(x)===code;});
+  if(clash){toast('Code already used', code+' is already used by '+clash.name+'. Pick a different code.','error');return;}
   if(editingBranchId){
     var b=getBranch(editingBranchId);
-    b.name=name;b.emoji=emoji;b.password=pw;
+    b.name=name;b.emoji=emoji;b.password=pw;b.code=code;
   }else{
     if(DB.branches.length>=MAX_BRANCHES){toast('Limit reached','Only '+MAX_BRANCHES+' branches allowed.','error');return;}
-    DB.branches.push({id:uid('br'),name:name,emoji:emoji,password:pw});
+    DB.branches.push({id:uid('br'),name:name,emoji:emoji,password:pw,code:code});
   }
   saveDB(DB);
   closeModal('branchModal');
@@ -2758,10 +2969,6 @@ document.getElementById('catMgrModal').addEventListener('click',function(e){if(e
 document.getElementById('editOrderModal').addEventListener('click',function(e){if(e.target===this)closeModal('editOrderModal');});
 
 renderRoot();
-setInterval(function(){
-  var removed=purgeOldArchives(DB);
-  if(removed>0){ saveDB(DB); renderRoot(); }
-},60*60*1000); // re-check every hour in case the app stays open across the 60-day mark
 </script>
 </body>
 </html>
