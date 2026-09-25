@@ -68,8 +68,8 @@ button{font-family:inherit;}
 
 /* ── LAYOUT ── */
 .wrap{max-width:1320px;margin:0 auto;padding:1.8rem 1.6rem 4rem;}
-.grid2{display:grid;grid-template-columns:400px 1fr;gap:1.6rem;align-items:start;}
-@media(max-width:900px){.grid2{grid-template-columns:1fr;}}
+.grid2{display:grid;grid-template-columns:400px minmax(0,1fr);gap:1.6rem;align-items:start;}
+@media(max-width:900px){.grid2{grid-template-columns:minmax(0,1fr);}}
 
 /* ── LANDING ── */
 .landing{max-width:920px;margin:3rem auto;text-align:center;}
@@ -371,8 +371,8 @@ table.rtable tr:hover td{background:var(--paper);}
 .cc-stats-row{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:1.4rem;}
 @media(max-width:1050px){.cc-stats-row{grid-template-columns:repeat(3,1fr);}}
 @media(max-width:600px){.cc-stats-row{grid-template-columns:repeat(2,1fr);}}
-.cc-grid{display:grid;grid-template-columns:280px 1fr;gap:1.6rem;align-items:start;}
-@media(max-width:900px){.cc-grid{grid-template-columns:1fr;}}
+.cc-grid{display:grid;grid-template-columns:280px minmax(0,1fr);gap:1.6rem;align-items:start;}
+@media(max-width:900px){.cc-grid{grid-template-columns:minmax(0,1fr);}}
 .cc-branch-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);}
 .cc-branch-row:last-child{border-bottom:none;}
 .cc-branch-name{font-size:13.5px;font-weight:600;}
@@ -497,7 +497,7 @@ table.rtable tr:hover td{background:var(--paper);}
     <div class="field">
       <label>Password</label>
       <div class="pw-wrap">
-        <input class="finput" id="bm_pw" type="text" placeholder="branch password">
+        <input class="finput" id="bm_pw" type="password" autocomplete="new-password" placeholder="branch password">
       </div>
     </div>
     <button class="btn btn-primary btn-block" onclick="saveBranchModal()">Save Branch</button>
@@ -704,10 +704,13 @@ function normalizeDB(d){
   if(!d)return defaultData();
   if(!d.branches)d.branches=[];
   if(!d.categories)d.categories=[];
+  d.categories.forEach(function(c){ if(c && c.items && !Array.isArray(c.items)) c.items=Object.keys(c.items).map(function(k){return c.items[k];}); });
   d.orders=toOrderArray(d.orders);
   if(!d.units || !d.units.length)d.units=['Kg','g','PCS','Selling Items','Bar Items'];
-  if(!d.adminPassword)d.adminPassword='admin123';
+  if(!d.adminPassword && !d.adminPwV)d.adminPassword='admin123';
   d.orders.forEach(function(o){
+    o.items=o.items?(Array.isArray(o.items)?o.items:Object.keys(o.items).map(function(k){return o.items[k];})).filter(Boolean):[];
+    if(!o.status)o.status='Pending';
     if(o.archived==null)o.archived=false;
     if(o.archived && o.archivedAt==null)o.archivedAt=Date.now();
   });
@@ -732,7 +735,7 @@ function loadDB(){
    2) the realtime listener further down skips applying an incoming
       server snapshot while we still have an unconfirmed write pending,
       so a slightly-stale echo can't stomp on a change we just made. */
-var APP_VERSION = 3; // bump when a new version must replace all open copies
+var APP_VERSION = 4; // bump when a new version must replace all open copies
 var pendingWrites = 0;
 /* FIX (lost/deleted orders): the old saveDB did fbRootRef.set(wholeDB),
    so any device holding a slightly out-of-date copy (e.g. admin's phone
@@ -741,6 +744,16 @@ var pendingWrites = 0;
    and orders are merged by id inside a Firebase transaction, so
    concurrent saves from different branches can never erase each other. */
 var serverBase = null; // last data we know the server had (deep copy)
+/* FIX: if the phone's storage is full the cache write used to fail
+   silently; now it retries without archived orders. */
+function writeCache(d){
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); return; }catch(e){}
+  try{
+    var slim={}; Object.keys(d).forEach(function(k){slim[k]=d[k];});
+    slim.orders=(d.orders||[]).filter(function(o){return !o.archived;});
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
+  }catch(e2){ try{ localStorage.removeItem(STORAGE_KEY); }catch(e3){} }
+}
 function deepCopy(x){ return x==null?x:JSON.parse(JSON.stringify(x)); }
 function stableStr(x){
   if(x===null||typeof x!=='object')return JSON.stringify(x===undefined?null:x);
@@ -762,7 +775,7 @@ function showOutdatedScreen(){
 }
 function saveDB(d, onFail){
   if(appOutdated)return Promise.resolve();
-  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }catch(e){}
+  writeCache(d);
   var base = serverBase || {};
   var baseOrders={}; toOrderArray(base.orders).forEach(function(o){baseOrders[o.id]=stableStr(o);});
   var curOrders={}; (d.orders||[]).forEach(function(o){ if(o&&o.id)curOrders[o.id]=o; });
@@ -790,15 +803,27 @@ function saveDB(d, onFail){
     if(stableStr(d[k])!==stableStr(base[k])){ otherUpdates[k]=deepCopy(d[k]); hasOther=true; }
   });
   serverBase = deepCopy(d);
-  var jobs=[];
+  var jobs=[], conflicts=[];
   if(hasOther) jobs.push(fbRootRef.update(otherUpdates));
   if(hasOrderChange){
     jobs.push(fbRootRef.child('orders').transaction(function(cur){
-      var list=toOrderArray(cur).filter(function(o){return !removals[o.id];});
+      conflicts=[];
+      var list=toOrderArray(cur).filter(function(o){
+        if(!removals[o.id])return true;
+        // FIX: don't delete an order whose status changed on another device meanwhile
+        var was=baseObjs[o.id]?(baseObjs[o.id].status||'Pending'):undefined;
+        if(was!==undefined && (o.status||'Pending')!==was){ conflicts.push(o.id); return true; }
+        return false;
+      });
       var seen={};
       list=list.map(function(o){
         if(seen[o.id])return o; seen[o.id]=true;
         if(fieldChanges[o.id]){
+          /* FIX (race): if another device changed this order's status
+             since we last saw it (e.g. branch marked Received while admin
+             was editing), our change is NOT applied on top of it. */
+          var was=baseObjs[o.id]?(baseObjs[o.id].status||'Pending'):undefined;
+          if(was!==undefined && (o.status||'Pending')!==was){ conflicts.push(o.id); return o; }
           var m=deepCopy(o), ch=fieldChanges[o.id];
           Object.keys(ch).forEach(function(k){ if(ch[k]===null)delete m[k]; else m[k]=ch[k]; });
           return m;
@@ -807,7 +832,14 @@ function saveDB(d, onFail){
       });
       // new orders are added (never overwriting an existing one with the same id);
       // edited orders that another device deleted meanwhile are NOT brought back
-      Object.keys(upserts).forEach(function(id){ if(!seen[id])list.push(upserts[id]); });
+      // FIX: a split whose original order hit a conflict must not create its new half
+      var badRoots={};
+      conflicts.forEach(function(cid){ var c=curOrders[cid]; if(c&&c.rootId)badRoots[c.rootId]=true; });
+      Object.keys(upserts).forEach(function(id){
+        if(seen[id])return;
+        if(upserts[id].rootId && badRoots[upserts[id].rootId]){ conflicts.push(id); return; }
+        list.push(upserts[id]);
+      });
       return list;
     }));
   }
@@ -815,6 +847,9 @@ function saveDB(d, onFail){
   pendingWrites++;
   return Promise.all(jobs).then(function(res){
     res.forEach(function(r){ if(r && r.committed===false) throw new Error('save was not committed'); });
+    if(conflicts.length){
+      toast('Not saved — changed on another device', conflicts.join(', ')+' was updated by someone else just now. Your change to it was skipped; please check it and try again.','error');
+    }
   }).then(function(){
     pendingWrites--;
   },function(e){
@@ -852,7 +887,8 @@ var cart = [];
 var branchFilter = 'All';
 var BRANCH_LOGOS = [LOGO_URI];
 function iconHtml(val){
-  if(val && val.indexOf('data:')===0){
+  if(val && String(val).indexOf('data:')===0){
+    if(!isSafeDataImg(val))return '🏬';
     return '<img src="'+val+'" style="width:1em;height:1em;object-fit:contain;vertical-align:-2px;border-radius:3px;display:inline-block">';
   }
   return esc(val||'');
@@ -882,8 +918,107 @@ var expandedOrders = {};
 ══════════════════════════════════════════════════════════ */
 function uid(p){return (p||'id')+'_'+Math.random().toString(36).slice(2,9);}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-function fmtDate(ts){return new Date(ts).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});}
-function monthKey(ts){var d=new Date(ts);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+/* FIX (XSS): a value placed inside onclick="fn('...')" must be escaped for
+   JavaScript AND for HTML, otherwise a name/id containing ' or " could
+   break out and run code. jsa() returns a safe quoted JS string. */
+function jsa(v){ return esc("'"+String(v==null?'':v).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'')+"'"); }
+
+/* FIX (timezone): dates, order numbers, "today" and months all use ONE
+   business time zone, so every device agrees (a phone set to another
+   zone put late-night orders on a different day / order number). */
+var BIZ_TZ='Asia/Dubai';
+var _bizFmt=null;
+function bizParts(ts){
+  try{
+    _bizFmt=_bizFmt||new Intl.DateTimeFormat('en-GB',{timeZone:BIZ_TZ,year:'numeric',month:'2-digit',day:'2-digit'});
+    var o={}; _bizFmt.formatToParts(new Date(ts)).forEach(function(p){o[p.type]=p.value;}); return o;
+  }catch(e){ var d=new Date(ts); return {year:String(d.getFullYear()),month:String(d.getMonth()+1).padStart(2,'0'),day:String(d.getDate()).padStart(2,'0')}; }
+}
+function dayKey(ts){ var p=bizParts(ts); return p.year+'-'+p.month+'-'+p.day; }
+function fmtDate(ts){
+  try{ return new Date(ts).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',timeZone:BIZ_TZ}); }
+  catch(e){ return new Date(ts).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); }
+}
+function monthKey(ts){ var p=bizParts(ts); return p.year+'-'+p.month; }
+
+/* FIX (quantities): quantities are typed text ("2.5", "10.0", "").
+   qtyNum() reads them as numbers; sums are done in whole thousandths so
+   0.1 + 0.2 never becomes 0.30000000000000004. */
+function qtyNum(v){ var n=parseFloat(String(v==null?'':v).replace(/,/g,'')); return isFinite(n)?n:NaN; }
+function r3(n){ return Math.round((Number(n)||0)*1000)/1000; }
+function fmtQty(n){ return r3(n).toLocaleString('en-US',{maximumFractionDigits:3}); }
+/* Units: "kg", "KG", "Kg" are the same; grams are converted to Kg so
+   2.5 Kg + 500 g = 3 Kg (not "502 Kg"). Other units stay separate. */
+function canonUnit(u){
+  var t=String(u||'').trim(), l=t.toLowerCase();
+  if(l==='kg'||l==='kgs'||l==='kilo'||l==='kilogram'||l==='kilograms')return {unit:'Kg',factor:1};
+  if(l==='g'||l==='gr'||l==='gram'||l==='grams')return {unit:'Kg',factor:0.001};
+  return {unit:t,factor:1};
+}
+function addQty(map, key, qty, unit){
+  var c=canonUnit(unit), n=qtyNum(qty);
+  if(!isFinite(n))return;
+  var k=key+'␟'+c.unit;
+  map[k]=map[k]||{qty:0,unit:c.unit};
+  map[k].qty=r3(map[k].qty+n*c.factor);
+}
+
+/* FIX (security): passwords are stored as a one-way hash, never as text.
+   A logged-in session holds a token T = sha256(salt:password); the
+   database only holds V = sha256(T). Knowing V (which anyone can read)
+   does not let you make a valid T, so the old trick of typing
+   {"role":"admin"} into localStorage no longer works. */
+function sha256(ascii){
+  function rr(v,a){return (v>>>a)|(v<<(32-a));}
+  var mp=Math.pow, maxWord=mp(2,32), result='', words=[], i, j;
+  var str=unescape(encodeURIComponent(ascii)), bitLen=str.length*8;
+  var hash=sha256.h=sha256.h||[], k=sha256.k=sha256.k||[], pl=k.length, isC={};
+  for(var cand=2; pl<64; cand++){ if(!isC[cand]){ for(i=0;i<313;i+=cand)isC[i]=cand; hash[pl]=(mp(cand,.5)*maxWord)|0; k[pl++]=(mp(cand,1/3)*maxWord)|0; } }
+  hash=hash.slice(0,8);
+  str+='\x80'; while(str.length%64-56)str+='\x00';
+  for(i=0;i<str.length;i++){ j=str.charCodeAt(i); words[i>>2]|=j<<((3-i)%4)*8; }
+  words[words.length]=((bitLen/maxWord)|0); words[words.length]=(bitLen);
+  for(j=0;j<words.length;){
+    var w=words.slice(j,j+=16), oldHash=hash;
+    hash=hash.slice(0,8);
+    for(i=0;i<64;i++){
+      var w15=w[i-15], w2=w[i-2], a=hash[0], e=hash[4];
+      var t1=hash[7]+(rr(e,6)^rr(e,11)^rr(e,25))+((e&hash[5])^((~e)&hash[6]))+k[i]
+        +(w[i]=(i<16)?w[i]:(w[i-16]+(rr(w15,7)^rr(w15,18)^(w15>>>3))+w[i-7]+(rr(w2,17)^rr(w2,19)^(w2>>>10)))|0);
+      var t2=(rr(a,2)^rr(a,13)^rr(a,22))+((a&hash[1])^(a&hash[2])^(hash[1]&hash[2]));
+      hash=[(t1+t2)|0].concat(hash); hash[4]=(hash[4]+t1)|0;
+    }
+    for(i=0;i<8;i++)hash[i]=(hash[i]+oldHash[i])|0;
+  }
+  for(i=0;i<8;i++)for(j=3;j+1;j--){ var b=(hash[i]>>(j*8))&255; result+=((b<16)?0:'')+b.toString(16); }
+  return result;
+}
+function newSalt(){ var a=new Uint32Array(4); try{crypto.getRandomValues(a);}catch(e){for(var i=0;i<4;i++)a[i]=Math.random()*4294967296;} return Array.prototype.map.call(a,function(x){return x.toString(36);}).join(''); }
+function pwToken(salt,pw){ return sha256(String(salt)+':'+String(pw)); }
+function pwVerifier(salt,pw){ return sha256(pwToken(salt,pw)); }
+/* rec = DB (admin) or a branch. Returns the session token if pw is right. */
+function checkPw(rec, pw, isAdmin){
+  if(!rec)return null;
+  var salt=isAdmin?rec.adminPwSalt:rec.pwSalt, ver=isAdmin?rec.adminPwV:rec.pwV;
+  if(salt && ver){ var t=pwToken(salt,pw); return sha256(t)===ver ? t : null; }
+  var plain=isAdmin?rec.adminPassword:rec.password;           // legacy (not migrated yet)
+  if(plain!=null && String(plain)!=='' && pw===String(plain)) return 'legacy';
+  return null;
+}
+function setPw(rec, pw, isAdmin){
+  var salt=newSalt(), v=pwVerifier(salt,pw);
+  if(isAdmin){ rec.adminPwSalt=salt; rec.adminPwV=v; rec.adminPassword=null; }
+  else { rec.pwSalt=salt; rec.pwV=v; rec.password=null; }
+  return pwToken(salt,pw);
+}
+function sessionValid(sess){
+  if(!sess||!sess.role)return false;
+  if(sess.role==='admin'){ return !!(DB.adminPwV && sess.t && sha256(sess.t)===DB.adminPwV); }
+  var b=getBranch(sess.branchId);
+  return !!(b && b.pwV && sess.t && sha256(sess.t)===b.pwV);
+}
+/* FIX (XSS): only real base64 image data may be used as an <img src>. */
+function isSafeDataImg(v){ return typeof v==='string' && /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+\/=]+$/.test(v); }
 /* ── ORDER AGING ──
    Flags Pending/Processing requests that have been sitting too long
    without action, so nothing quietly falls through the cracks. */
@@ -929,8 +1064,9 @@ function branchCode(b){
   return (b?b.name:'BR').replace(/[^A-Za-z]/g,'').slice(0,3).toUpperCase()||'BRN';
 }
 function datePart(ts){
-  var d=new Date(ts);
-  return String(d.getDate()).padStart(2,'0')+String(d.getMonth()+1).padStart(2,'0')+String(d.getFullYear()).slice(-2);
+  // FIX: uses the business timezone (Dubai) so every device gives the same order-number date
+  var k=dayKey(ts); // YYYY-MM-DD
+  return k.slice(8,10)+k.slice(5,7)+k.slice(2,4);
 }
 function nextOrderNumber(branchId){
   var key=branchCode(getBranch(branchId))+'-'+datePart(Date.now());
@@ -980,15 +1116,46 @@ function openAdminLogin(){
 }
 function doLogin(){
   if(!pendingLogin)return;
+  /* FIX: never check or migrate passwords against the local cache —
+     wait until the real server data has arrived. */
+  if(!fbInitialLoadDone || appOutdated){
+    toast('Connecting…','Still loading data from the server. Please wait a moment and try again.','error');
+    return;
+  }
   var pw=document.getElementById('loginPw').value;
-  var ok=false, sess=null;
+  var ok=false, sess=null, tok=null, mig={};
   if(pendingLogin.type==='admin'){
-    ok = pw===DB.adminPassword;
-    sess={role:'admin'};
+    tok=checkPw(DB, pw, true);
+    if(tok==='legacy'){
+      /* first login after this update: replace the plain-text passwords
+         (admin + every branch) with hashes, so none are left readable */
+      tok=setPw(DB, pw, true);
+      mig.adminPwSalt=DB.adminPwSalt; mig.adminPwV=DB.adminPwV; mig.adminPassword=null;
+      DB.branches.forEach(function(b,i){
+        if(b.password!=null && String(b.password)!=='' && !b.pwV){
+          setPw(b, String(b.password), false);
+          mig['branches/'+i+'/pwSalt']=b.pwSalt; mig['branches/'+i+'/pwV']=b.pwV; mig['branches/'+i+'/password']=null;
+        }
+      });
+    }
+    ok=!!tok;
+    sess={role:'admin', t:tok};
   }else{
     var b=getBranch(pendingLogin.branchId);
-    ok = b && pw===b.password;
-    sess={role:'branch', branchId:pendingLogin.branchId};
+    tok=checkPw(b, pw, false);
+    if(tok==='legacy'){
+      tok=setPw(b, pw, false);
+      var bi=DB.branches.indexOf(b);
+      mig['branches/'+bi+'/pwSalt']=b.pwSalt; mig['branches/'+bi+'/pwV']=b.pwV; mig['branches/'+bi+'/password']=null;
+    }
+    ok=!!tok;
+    sess={role:'branch', branchId:pendingLogin.branchId, t:tok};
+  }
+  if(ok && Object.keys(mig).length){
+    // only the password fields are written (never the whole branch list)
+    if(serverBase){ serverBase.branches=deepCopy(DB.branches); serverBase.adminPwSalt=DB.adminPwSalt; serverBase.adminPwV=DB.adminPwV; serverBase.adminPassword=DB.adminPassword; }
+    pendingWrites++;
+    fbRootRef.update(mig).then(function(){pendingWrites--;},function(e){pendingWrites--;toast('Sync error','Could not update the password on the server: '+e.message,'error');});
   }
   if(ok){
     session=sess;
@@ -1097,7 +1264,7 @@ fbRootRef.on('value', function(snapshot){
   if((meta.minVersion||0)<APP_VERSION && !versionBumped){ versionBumped=true; fbRootRef.child('appMeta').update({minVersion:APP_VERSION}); }
   DB=normalizeDB(data);
   serverBase=deepCopy(DB);
-  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); }catch(e){}
+  writeCache(DB);
   var newSnap=snapshotOrders();
   if(fbInitialLoadDone){
     if(session && session.role==='admin'){
@@ -1132,6 +1299,16 @@ fbRootRef.on('value', function(snapshot){
 ══════════════════════════════════════════════════════════ */
 function renderRoot(){
   var topbar=document.getElementById('topbar');
+  /* FIX (security): a session is only accepted if its token matches the
+     stored password hash — a hand-made {"role":"admin"} is rejected.
+     Before the first server read we only have the local cache, so an
+     unknown session just shows the landing page instead of logging out. */
+  if(session && !sessionValid(session)){
+    if(fbInitialLoadDone){ session=null; try{localStorage.removeItem('windmill_session');}catch(e){} }
+    topbar.style.display='none';
+    renderLanding();
+    return;
+  }
   if(!session){
     topbar.style.display='none';
     renderLanding();
@@ -1146,7 +1323,7 @@ function renderRoot(){
     renderAdmin();
   }else{
     var b=getBranch(session.branchId);
-    if(!b){doLogout();return;}
+    if(!b){ if(fbInitialLoadDone)doLogout(); else renderLanding(); return; }
     document.getElementById('topStamp').src=LOGO_URI;
     document.getElementById('brandSub').textContent=b.name;
     document.getElementById('roleChip').textContent='📍 '+b.name;
@@ -1160,7 +1337,7 @@ function renderRoot(){
 function renderLanding(){
   var slots=MAX_BRANCHES-DB.branches.length;
   var cardsHtml = DB.branches.map(function(b){
-    return '<div class="branch-card" onclick="openBranchLogin(\''+b.id+'\')">'
+    return '<div class="branch-card" onclick="openBranchLogin('+jsa(b.id)+')">'
       +'<div class="stamp gold">'+iconHtml(b.emoji||'🏬')+'</div>'
       +'<div class="branch-card-name">'+esc(b.name)+'</div>'
       +'<div class="branch-card-tag">Branch Login</div>'
@@ -1192,15 +1369,45 @@ function renderBranchTicketList(orders, activeFilter){
 /* ══════════════════════════════════════════════════════════
    BRANCH DASHBOARD
 ══════════════════════════════════════════════════════════ */
+/* FIX: every save from ANY device re-rendered this screen and wiped
+   whatever the branch was typing in "Build Request". The form values
+   and the opened tickets are now kept across re-renders. */
+var openTickets={};
+function captureBranchForm(){
+  var g=function(id){return document.getElementById(id);};
+  if(!g('ci_cat'))return null;
+  var nm=g('ci_name');
+  var st={cat:g('ci_cat').value, name:nm.value, locked:nm.hasAttribute('readonly'),
+    qty:g('ci_qty').value, unit:g('ci_unit').value, priority:g('ci_priority').value, note:g('ci_note').value,
+    focus:document.activeElement&&document.activeElement.id||''};
+  return st;
+}
+function restoreBranchForm(st){
+  if(!st)return;
+  var g=function(id){return document.getElementById(id);};
+  if(!g('ci_cat'))return;
+  g('ci_cat').value=st.cat;
+  var nm=g('ci_name'); nm.value=st.name;
+  if(st.locked){ nm.setAttribute('readonly','readonly'); nm.classList.add('locked'); var cb=g('ci_nameClearBtn'); if(cb)cb.style.display='flex'; }
+  g('ci_qty').value=st.qty;
+  var u=g('ci_unit');
+  if(st.unit && !Array.prototype.some.call(u.options,function(o){return o.value===st.unit;})){ var op=document.createElement('option'); op.value=st.unit; op.textContent=st.unit; u.appendChild(op); }
+  u.value=st.unit;
+  g('ci_priority').value=st.priority; g('ci_note').value=st.note;
+  if(st.focus && g(st.focus) && st.focus!=='ci_name'){ try{ g(st.focus).focus(); }catch(e){} }
+}
 function renderBranch(b){
+  var formState=captureBranchForm();
   var myOrders=DB.orders.filter(function(o){return o.branchId===b.id;}).sort(function(a,c){return c.ts-a.ts;});
   var s={
+    Cancelled:myOrders.filter(function(o){return o.status==='Cancelled';}).length,
     Pending:myOrders.filter(function(o){return o.status==='Pending';}).length,
     Processing:myOrders.filter(function(o){return o.status==='Processing';}).length,
     Sent:myOrders.filter(function(o){return o.status==='Sent';}).length,
     Received:myOrders.filter(function(o){return o.status==='Received';}).length
   };
-  var filtered = branchFilter==='All'?myOrders.filter(function(o){return o.status!=='Received';}):myOrders.filter(function(o){return o.status===branchFilter;});
+  // "All" = everything still in progress (not Received, not Cancelled)
+  var filtered = branchFilter==='All'?myOrders.filter(function(o){return o.status!=='Received'&&o.status!=='Cancelled';}):myOrders.filter(function(o){return o.status===branchFilter;});
 
   var catOptions='<option value="">— Select Category —</option>'
     +DB.categories.map(function(c){return '<option value="'+c.id+'">'+esc(c.emoji||'')+' '+esc(c.name)+'</option>';}).join('');
@@ -1243,8 +1450,9 @@ function renderBranch(b){
         +'<div class="card">'
           +'<div class="card-head"><span class="card-title">My Requests</span></div>'
           +'<div class="pills" style="margin-bottom:12px">'
-            +['All','Pending','Processing','Sent','Received'].map(function(f){
-              return '<button class="pill '+(branchFilter===f?'active':'')+'" onclick="branchFilter=\''+f+'\';renderBranch(getBranch(\''+b.id+'\'))">'+f+'</button>';
+            +['All','Pending','Processing','Sent','Received','Cancelled'].map(function(f){
+              if(f==='Cancelled' && !s.Cancelled && branchFilter!=='Cancelled')return '';
+              return '<button class="pill '+(branchFilter===f?'active':'')+'" onclick="branchFilter='+jsa(f)+';renderBranch(getBranch('+jsa(b.id)+'))">'+f+(f==='Cancelled'?' ('+s.Cancelled+')':'')+'</button>';
             }).join('')
           +'</div>'
           +renderBranchTicketList(filtered, branchFilter)
@@ -1252,6 +1460,7 @@ function renderBranch(b){
       +'</div>'
     +'</div>'
    +'</div>';
+  restoreBranchForm(formState);
   renderOrderPreview();
 }
 
@@ -1298,7 +1507,7 @@ function showNameSuggestions(val){
     return;
   }
   drop.innerHTML=filtered.slice(0,40).map(function(i,idx){
-    return '<div class="name-sugg-item" data-idx="'+idx+'" data-name="'+esc(i.name)+'" data-catid="'+esc(i.catId)+'" onmousedown="selectNameSuggestion(\''+i.name.replace(/'/g,"\\'")+'\',\''+i.catId+'\')">'
+    return '<div class="name-sugg-item" data-idx="'+idx+'" data-name="'+esc(i.name)+'" data-catid="'+esc(i.catId)+'" onmousedown="selectNameSuggestion('+jsa(i.name)+','+jsa(i.catId)+')">'
       +'<span class="name-sugg-text">'+esc(i.name)+'</span>'
       +(selectedCatId?'':'<span class="name-sugg-cat">'+esc(i.catEmoji)+' '+esc(i.catName)+'</span>')
     +'</div>';
@@ -1377,6 +1586,7 @@ function addToCart(){
   if(!name){toast('Missing item name','Please select an item from the list.','error');return;}
   if(!nameInpEl.hasAttribute('readonly')){toast('Select from list','Custom items aren\'t allowed — please pick an item from the suggestions.','error');showNameSuggestions(name);return;}
   if(!qty){toast('Missing quantity','Please enter a quantity.','error');return;}
+  if(!(qtyNum(qty)>0)){toast('Invalid quantity','Quantity must be more than 0.','error');return;}
   cart.push({id:uid('itm'), catId:catId, catName:catId?getCat(catId).name:'', catEmoji:catId?(getCat(catId).emoji||''):'', name:name, qty:qty, unit:unit, priority:priority, note:note});
   var nameInp=document.getElementById('ci_name');
   if(nameInp){nameInp.value='';nameInp.removeAttribute('readonly');nameInp.classList.remove('locked');}
@@ -1400,6 +1610,8 @@ function openEditCartItem(id){
   if(!it)return;
   editingCartItemId=id;
   document.getElementById('cim_name').value=it.name;
+  document.getElementById('cim_name').readOnly=true; // item must stay one from the list
+  document.getElementById('cim_name').title='To change the item, remove it and add another from the list';
   document.getElementById('cim_qty').value=it.qty;
   document.getElementById('cim_unit').innerHTML=unitSelectOptions(it.unit||'');
   document.getElementById('cim_priority').value=it.priority||'Normal';
@@ -1412,6 +1624,7 @@ function saveCartItemEdit(){
   var name=document.getElementById('cim_name').value.trim();
   var qty=document.getElementById('cim_qty').value.trim();
   if(!name||!qty){toast('Missing info','Item name and quantity are required.','error');return;}
+  if(!(qtyNum(qty)>0)){toast('Invalid quantity','Quantity must be more than 0.','error');return;}
   it.name=name;
   it.qty=qty;
   it.unit=document.getElementById('cim_unit').value;
@@ -1457,8 +1670,8 @@ function renderOrderPreview(){
           +'<td data-label="Priority">'+(it.priority==='High'?'<span class="oc-pri-high">⚡ High</span>':'<span style="color:var(--muted)">—</span>')+'</td>'
           +'<td data-label="Note" style="color:var(--muted)">'+(it.note?esc(it.note):'—')+'</td>'
           +'<td class="oc-actions" data-label="Actions">'
-            +'<button onclick="openEditCartItem(\''+it.id+'\')" title="Edit">✎</button>'
-            +'<button onclick="removeFromCart(\''+it.id+'\')" title="Remove">✕</button>'
+            +'<button onclick="openEditCartItem('+jsa(it.id)+')" title="Edit">✎</button>'
+            +'<button onclick="removeFromCart('+jsa(it.id)+')" title="Remove">✕</button>'
           +'</td>'
         +'</tr>';
       }).join('');
@@ -1557,17 +1770,17 @@ function renderTicket(o){
   var actions='';
   if(isAdmin){
     var actBtn='';
-    if(o.status==='Pending')actBtn='<button class="btn btn-teal" onclick="advanceStatus(\''+o.id+'\')">Mark Processing</button>';
-    else if(o.status==='Processing')actBtn='<button class="btn btn-teal" onclick="openMarkSentModal(\''+o.id+'\')">🚚 Mark Sent</button>';
+    if(o.status==='Pending')actBtn='<button class="btn btn-teal" onclick="advanceStatus('+jsa(o.id)+')">Mark Processing</button>';
+    else if(o.status==='Processing')actBtn='<button class="btn btn-teal" onclick="openMarkSentModal('+jsa(o.id)+')">🚚 Mark Sent</button>';
     else if(o.status==='Sent')actBtn='<button class="btn btn-teal" disabled>⏳ Awaiting branch to confirm receipt</button>';
-    else if(o.status==='Received'||o.status==='Arranged')actBtn='<button class="btn btn-teal" onclick="archiveOrder(\''+o.id+'\')">📦 Archive</button>';
+    else if(o.status==='Received'||o.status==='Arranged'||o.status==='Cancelled')actBtn='<button class="btn btn-teal" onclick="archiveOrder('+jsa(o.id)+')">📦 Archive</button>';
     actions='<div class="ticket-actions">'
       +actBtn
-      +'<button class="btn btn-outline" onclick="revertStatus(\''+o.id+'\')" '+(o.status==='Pending'||o.status==='Cancelled'?'disabled':'')+'>Revert</button>'
+      +'<button class="btn btn-outline" onclick="revertStatus('+jsa(o.id)+')" '+(o.status==='Pending'?'disabled':'')+'>Revert</button>'
     +'</div>';
   }else if(session && session.role==='branch' && o.status==='Sent'){
     actions='<div class="ticket-actions">'
-      +'<button class="btn btn-teal btn-block" onclick="openMarkReceivedModal(\''+o.id+'\')">📥 Mark Received</button>'
+      +'<button class="btn btn-teal btn-block" onclick="openMarkReceivedModal('+jsa(o.id)+')">📥 Mark Received</button>'
     +'</div>';
   }
   var batchLabel='';
@@ -1579,24 +1792,26 @@ function renderTicket(o){
     }
   }
   var ageInfo=orderAgeInfo(o);
-  return '<div class="ticket '+ageInfo.cls+'">'
+  var tOpen=!!openTickets[o.id];
+  return '<div class="ticket '+ageInfo.cls+'" data-oid="'+esc(o.id)+'">'
     +'<div class="ticket-top" onclick="toggleTicketBody(this)" style="cursor:pointer">'
       +'<div><div class="ticket-branch">'+(b?iconHtml(b.emoji||'')+' '+esc(b.name):'Unknown branch')+'</div><div class="ticket-id mono">'+esc(o.id)+'</div></div>'
       +'<div style="display:flex;align-items:center;gap:8px">'
         +'<span class="status-badge status-'+o.status+'">'+o.status+'</span>'
         +ageInfo.badge
-        +'<span class="ticket-chevron">▾</span>'
+        +'<span class="ticket-chevron">'+(tOpen?'▴':'▾')+'</span>'
       +'</div>'
     +'</div>'
     +'<div class="ticket-foot" onclick="toggleTicketBody(this)" style="cursor:pointer">'
       +'<span>'+o.items.length+' item'+(o.items.length!==1?'s':'')+'</span><span class="mono">'+fmtDate(o.ts)+'</span>'
     +'</div>'
-    +'<div class="ticket-body">'
+    +'<div class="ticket-body'+(tOpen?' open':'')+'">'
+      +(o.status==='Cancelled'?'<div style="font-size:12px;color:var(--danger);margin-bottom:6px">✕ This request was cancelled by Main Branch.</div>':'')
       +(batchLabel?'<div style="margin-bottom:8px">'+batchLabel+'</div>':'')
       +'<div class="ticket-items">'+itemsHtml+'</div>'
       +(o.note?'<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Note: '+esc(o.note)+'</div>':'')
       +(o.carrier?'<div style="font-size:12px;color:var(--ink2);margin-bottom:6px">🚚 Picked up by: <strong>'+esc(o.carrier)+'</strong></div>':'')
-      +(o.receivedNote?'<div style="font-size:12px;color:var(--danger);margin-bottom:6px">📥 Shortage noted: '+esc(o.receivedNote)+'</div>':'')
+      +(o.receivedNote?'<div style="font-size:12px;color:var(--danger);margin-bottom:6px">📥 Delivery issue: '+esc(o.receivedNote)+'</div>':'')
       +actions
     +'</div>'
   +'</div>';
@@ -1611,21 +1826,29 @@ function toggleTicketBody(headerEl){
   if(!body)return;
   var isOpen=body.classList.toggle('open');
   if(chevron)chevron.textContent=isOpen?'▴':'▾';
+  if(ticket.dataset.oid)openTickets[ticket.dataset.oid]=isOpen;
 }
 
 function advanceStatus(orderId){
   var o=DB.orders.find(function(x){return x.id===orderId;});
-  if(!o)return;
+  if(!o||o.archived)return;
   var flow={Pending:'Processing'};
   if(flow[o.status]){o.status=flow[o.status];saveDB(DB);renderRoot();toast('Status updated', o.id+' → '+o.status,'success');}
 }
 function revertStatus(orderId){
   var o=DB.orders.find(function(x){return x.id===orderId;});
-  if(!o)return;
+  if(!o||o.archived)return;
   var back={Processing:'Pending',Sent:'Processing',Received:'Sent'};
+  // FIX: a cancelled order can now be brought back to where it was
+  if(o.status==='Cancelled') back.Cancelled=o.prevStatus||'Pending';
   if(back[o.status]){
     if(o.status==='Sent')o.carrier='';
-    if(o.status==='Received')o.receivedNote='';
+    if(o.status==='Received'){
+      // FIX: also clear the per-item received data, otherwise old shortages stay in reports
+      o.receivedNote='';
+      (o.items||[]).forEach(function(it){ delete it.receivedQty; delete it.hasIssue; delete it.issueNote; });
+    }
+    if(o.status==='Cancelled'){ delete o.prevStatus; }
     o.status=back[o.status];saveDB(DB);renderRoot();toast('Status reverted', o.id+' → '+o.status,'');
   }
 }
@@ -1637,7 +1860,7 @@ function renderAdmin(){
   var app=document.getElementById('app');
   var tabsHtml=['control','overview','branches'].map(function(t){
     var labels={control:'🎛 Control Center',overview:'📊 Full Report',branches:'🏬 Branches'};
-    return '<button class="tab '+(adminTab===t?'active':'')+'" onclick="adminTab=\''+t+'\';renderAdmin()">'+labels[t]+'</button>';
+    return '<button class="tab '+(adminTab===t?'active':'')+'" onclick="adminTab='+jsa(t)+';renderAdmin()">'+labels[t]+'</button>';
   }).join('');
   app.innerHTML='<div class="wrap"><div class="tabs">'+tabsHtml+'</div><div id="adminBody"></div></div>';
   var body=document.getElementById('adminBody');
@@ -1671,8 +1894,8 @@ function buildControlCenter(){
   else listOrders=branchScoped.filter(function(o){return o.status===ccStatusFilter;});
 
   if(ccTodayOnly){
-    var todayStr=new Date().toDateString();
-    listOrders=listOrders.filter(function(o){return new Date(o.ts).toDateString()===todayStr;});
+    var todayStr=dayKey(Date.now());
+    listOrders=listOrders.filter(function(o){return dayKey(o.ts)===todayStr;});
   }
   if(ccSearchQuery.trim()){
     var q=ccSearchQuery.trim().toLowerCase();
@@ -1693,7 +1916,7 @@ function buildControlCenter(){
     +'<div class="stat danger"><div class="stat-label">Urgent Orders</div><div class="stat-value">'+urgentCount+'</div><div class="card-note">High priority pending</div></div>'
     +'<div class="stat gold"><div class="stat-label">Pending</div><div class="stat-value">'+pendingCount+'</div><div class="card-note">Need action</div></div>'
     +'<div class="stat teal"><div class="stat-label">Processing</div><div class="stat-value">'+processingCount+'</div><div class="card-note">Being arranged</div></div>'
-    +'<div class="stat"><div class="stat-label">Sent</div><div class="stat-value">'+sentCount+'</div><div class="card-note">Dispatched</div></div>'
+    +'<div class="stat"><div class="stat-label">Dispatched</div><div class="stat-value">'+sentCount+'</div><div class="card-note">Sent + Received</div></div>'
     +'<div class="stat"><div class="stat-label">Total Items</div><div class="stat-value">'+totalItems+'</div><div class="card-note">Across all orders</div></div>'
   +'</div>';
 
@@ -1714,7 +1937,7 @@ function buildControlCenter(){
     var dispatchedCount=live.filter(function(o){return o.branchId===b.id && (o.status==='Sent'||o.status==='Received');}).length;
     return '<div class="cc-branch-row"><div><div class="cc-branch-name">'+iconHtml(b.emoji||'🏬')+' '+esc(b.name)+'</div>'
       +'<div class="cc-branch-count">'+activeCount+' order'+(activeCount!==1?'s':'')+(archivedCount?' · '+archivedCount+' archived':'')+'</div></div>'
-      +'<button class="cc-clear-btn" onclick="confirmClearBranch(\''+b.id+'\')" '+(dispatchedCount?'':'disabled')+'>clear</button>'
+      +'<button class="cc-clear-btn" onclick="confirmClearBranch('+jsa(b.id)+')" '+(dispatchedCount?'':'disabled')+'>clear</button>'
     +'</div>';
   }).join('');
 
@@ -1722,7 +1945,7 @@ function buildControlCenter(){
     +'<div class="cc-filter-chip '+(ccBranchFilter==='All'?'active':'')+'" onclick="ccBranchFilter=\'All\';renderAdmin()"><span>All Branches</span><span class="cnt">'+live.length+'</span></div>'
     +DB.branches.map(function(b){
       var c=live.filter(function(o){return o.branchId===b.id;}).length;
-      return '<div class="cc-filter-chip '+(ccBranchFilter===b.id?'active':'')+'" onclick="ccBranchFilter=\''+b.id+'\';renderAdmin()"><span>'+iconHtml(b.emoji||'🏬')+' '+esc(b.name)+'</span><span class="cnt">'+c+'</span></div>';
+      return '<div class="cc-filter-chip '+(ccBranchFilter===b.id?'active':'')+'" onclick="ccBranchFilter='+jsa(b.id)+';renderAdmin()"><span>'+iconHtml(b.emoji||'🏬')+' '+esc(b.name)+'</span><span class="cnt">'+c+'</span></div>';
     }).join('')
   +'</div>';
 
@@ -1733,7 +1956,7 @@ function buildControlCenter(){
 
   var statusTabsDef=[['All','All'],['Pending','Pending'],['Processing','Processing'],['Sent','Sent'],['Received','Received'],['Archived','🗄 Archive']];
   var pillsHtml=statusTabsDef.map(function(p){
-    return '<button class="pill '+(ccStatusFilter===p[0]?'active':'')+'" onclick="ccStatusFilter=\''+p[0]+'\';renderAdmin()">'+p[1]+' <span style="opacity:.7">'+statusCounts[p[0]]+'</span></button>';
+    return '<button class="pill '+(ccStatusFilter===p[0]?'active':'')+'" onclick="ccStatusFilter='+jsa(p[0])+';renderAdmin()">'+p[1]+' <span style="opacity:.7">'+statusCounts[p[0]]+'</span></button>';
   }).join('');
 
   var listHtml=listOrders.length? listOrders.map(renderOrderRow).join('') : '<div class="empty-box"><div class="em">📬</div>No orders match this filter or search.</div>';
@@ -1804,18 +2027,14 @@ function monthDeleteTargets(){
 function exportMonthCsv(){
   var list=monthDeleteTargets();
   if(!list.length){toast('Nothing to export','No archived orders in that month.','error');return;}
-  var rows=[['Order ID','Branch','Category','Item','Ordered Qty','Received Qty','Unit','Priority','Status','Date']];
+  var rows=[['Order ID','Branch','Category','Item','Ordered Qty','Received Qty','Difference','Unit','Priority','Status','Date']];
   list.forEach(function(o){
     var b=getBranch(o.branchId);
-    o.items.forEach(function(it){
-      rows.push([o.id, b?b.name:'', it.catName||'—', it.name, it.qty, (it.receivedQty!==undefined?it.receivedQty:''), it.unit||'', it.priority, o.status, fmtDate(o.ts)]);
+    (o.items||[]).forEach(function(it){
+      rows.push([o.id, b?b.name:'', it.catName||'—', it.name, it.qty, (it.receivedQty!==undefined&&it.receivedQty!==null?it.receivedQty:''), receivedDiff(it)||'', it.unit||'', it.priority, o.status, fmtDate(o.ts)]);
     });
   });
-  var csv=rows.map(function(r){return r.map(function(v){return '"'+String(v==null?'':v).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
-  var url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-  var a=document.createElement('a');
-  a.href=url;a.download='windmill_archive_'+monthDelKey+(ccBranchFilter==='All'?'':'_'+ccBranchFilter)+'.csv';a.click();
-  URL.revokeObjectURL(url);
+  downloadCsv(rows, 'windmill_archive_'+monthDelKey+(ccBranchFilter==='All'?'':'_'+ccBranchFilter)+'.csv');
   toast('Exported',monthLabel(monthDelKey)+' downloaded as CSV','success');
 }
 function confirmDeleteMonth(){
@@ -1907,7 +2126,7 @@ function bulkArchive(){
   var count=0;
   ids.forEach(function(id){
     var o=DB.orders.find(function(x){return x.id===id;});
-    if(o && (o.status==='Received'||o.status==='Arranged') && !o.archived){o.archived=true;o.archivedAt=Date.now();delete ccSelectedIds[id];count++;}
+    if(o && (o.status==='Received'||o.status==='Arranged'||o.status==='Cancelled') && !o.archived){o.archived=true;o.archivedAt=Date.now();delete ccSelectedIds[id];count++;}
   });
   if(!count){toast('Nothing to update','No selected orders are ready to archive.','error');return;}
   saveDB(DB);
@@ -1947,19 +2166,21 @@ function renderOrderRow(o){
     var advanceInfo=nextStatusAction(o);
     var locked=['Sent','Received','Cancelled'].indexOf(o.status)!==-1;
     var lockAttr=locked?'disabled title="Locked — this order has already been sent"':'';
+    var delLock=(o.status==='Sent'||o.status==='Received')?lockAttr:'';
     actionsHtml='<div class="cc-actions">'
-      +(advanceInfo&&advanceInfo.fn?'<button class="btn btn-teal" onclick="event.stopPropagation();'+advanceInfo.fn+'(\''+o.id+'\')">'+advanceInfo.label+'</button>':'<button class="btn btn-teal" disabled>'+(advanceInfo?advanceInfo.label:'— No action —')+'</button>')
-      +'<button class="btn btn-outline" onclick="event.stopPropagation();confirmCancelOrder(\''+o.id+'\')" '+(o.status==='Cancelled'?'disabled':lockAttr)+'>✕ Cancel</button>'
-      +(!locked&&o.items.length>1?'<button class="btn btn-outline" onclick="event.stopPropagation();openSplitOrderModal(\''+o.id+'\')">✂ Split</button>':'')
-      +'<button class="btn btn-outline" onclick="event.stopPropagation();openEditOrderModal(\''+o.id+'\')">✏️ Edit</button>'
-      +'<button class="btn btn-outline" onclick="event.stopPropagation();invoiceOrder(\''+o.id+'\')">📄 Invoice</button>'
-      +'<button class="btn btn-outline" onclick="event.stopPropagation();printOrderInvoice(\''+o.id+'\')">🖨 Print</button>'
-      +'<button class="btn btn-danger" onclick="event.stopPropagation();confirmDeleteOrder(\''+o.id+'\')" '+lockAttr+'>🗑 Delete</button>'
+      +(advanceInfo&&advanceInfo.fn?'<button class="btn btn-teal" onclick="event.stopPropagation();'+advanceInfo.fn+'('+jsa(o.id)+')">'+advanceInfo.label+'</button>':'<button class="btn btn-teal" disabled>'+(advanceInfo?advanceInfo.label:'— No action —')+'</button>')
+      +'<button class="btn btn-outline" onclick="event.stopPropagation();confirmCancelOrder('+jsa(o.id)+')" '+(o.status==='Cancelled'?'disabled':lockAttr)+'>✕ Cancel</button>'
+      +(!locked&&o.items.length>1?'<button class="btn btn-outline" onclick="event.stopPropagation();openSplitOrderModal('+jsa(o.id)+')">✂ Split</button>':'')
+      +'<button class="btn btn-outline" onclick="event.stopPropagation();openEditOrderModal('+jsa(o.id)+')" '+lockAttr+'>✏️ Edit</button>'
+      +(o.status==='Cancelled'?'<button class="btn btn-outline" onclick="event.stopPropagation();revertStatus('+jsa(o.id)+')">↩ Undo cancel</button>':'')
+      +'<button class="btn btn-outline" onclick="event.stopPropagation();invoiceOrder('+jsa(o.id)+')">📄 Invoice</button>'
+      +'<button class="btn btn-outline" onclick="event.stopPropagation();printOrderInvoice('+jsa(o.id)+')">🖨 Print</button>'
+      +'<button class="btn btn-danger" onclick="event.stopPropagation();confirmDeleteOrder('+jsa(o.id)+')" '+delLock+'>🗑 Delete</button>'
     +'</div>';
   }else if(isAdmin && o.archived){
     actionsHtml='<div class="cc-actions">'
-      +'<button class="btn btn-outline" onclick="event.stopPropagation();restoreOrder(\''+o.id+'\')">↩ Restore</button>'
-      +'<button class="btn btn-danger" onclick="event.stopPropagation();confirmDeleteOrder(\''+o.id+'\')">🗑 Delete</button>'
+      +'<button class="btn btn-outline" onclick="event.stopPropagation();restoreOrder('+jsa(o.id)+')">↩ Restore</button>'
+      +'<button class="btn btn-danger" onclick="event.stopPropagation();confirmDeleteOrder('+jsa(o.id)+')">🗑 Delete</button>'
     +'</div>';
   }
 
@@ -1976,10 +2197,10 @@ function renderOrderRow(o){
   var ageInfo=orderAgeInfo(o);
   var isSelected=!!ccSelectedIds[o.id];
   var showCheckbox=ccBulkMode && isAdminUser && !o.archived;
-  var checkboxHtml=showCheckbox?'<input type="checkbox" class="cc-bulk-checkbox" '+(isSelected?'checked':'')+' onclick="event.stopPropagation();toggleOrderSelect(\''+o.id+'\',this.checked)">':'';
+  var checkboxHtml=showCheckbox?'<input type="checkbox" class="cc-bulk-checkbox" '+(isSelected?'checked':'')+' onclick="event.stopPropagation();toggleOrderSelect('+jsa(o.id)+',this.checked)">':'';
 
   return '<div class="cc-order '+(isOpen?'open':'')+' '+ageInfo.cls+' '+(showCheckbox?'bulk-mode':'')+' '+(isSelected?'selected':'')+'">'
-    +'<div class="cc-order-head" onclick="toggleOrderExpand(\''+o.id+'\')">'
+    +'<div class="cc-order-head" onclick="toggleOrderExpand('+jsa(o.id)+')">'
       +checkboxHtml
       +'<div class="cc-order-top">'
         +'<div class="cc-order-left">'
@@ -1998,7 +2219,7 @@ function renderOrderRow(o){
       +'<div style="overflow-x:auto"><table class="cc-item-table"><thead><tr><th style="width:26px">#</th><th>Item</th><th>Qty</th><th>Category</th><th>Priority</th><th>Note</th></tr></thead><tbody>'+rowsHtml+'</tbody></table></div>'
       +(o.note?'<div style="padding:10px 16px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line)">Order note: '+esc(o.note)+'</div>':'')
       +(o.carrier?'<div style="padding:10px 16px;font-size:12.5px;color:var(--ink2);border-top:1px solid var(--line)">🚚 Sent — picked up by <strong>'+esc(o.carrier)+'</strong></div>':'')
-      +(o.receivedNote?'<div style="padding:10px 16px;font-size:12.5px;color:var(--danger);border-top:1px solid var(--line)">📥 Branch reported shortage: '+esc(o.receivedNote)+'</div>':(o.status==='Received'?'<div style="padding:10px 16px;font-size:12.5px;color:var(--success);border-top:1px solid var(--line)">📥 Received — branch confirmed all items arrived</div>':''))
+      +(o.receivedNote?'<div style="padding:10px 16px;font-size:12.5px;color:var(--danger);border-top:1px solid var(--line)">📥 Branch reported delivery issue: '+esc(o.receivedNote)+'</div>':(o.status==='Received'?'<div style="padding:10px 16px;font-size:12.5px;color:var(--success);border-top:1px solid var(--line)">📥 Received — branch confirmed all items arrived</div>':''))
       +'<div class="cc-order-foot"><span style="font-size:11.5px;color:var(--muted)">'+fmtDate(o.ts)+'</span>'+actionsHtml+'</div>'
     +'</div>'
   +'</div>';
@@ -2020,7 +2241,9 @@ function openSplitOrderModal(id){
 }
 function confirmSplitOrder(){
   var o=DB.orders.find(function(x){return x.id===pendingSplitOrderId;});
-  if(!o)return;
+  if(!o){closeModal('splitModal');return;}
+  if((o.status!=='Pending'&&o.status!=='Processing')||o.archived){ closeModal('splitModal'); renderAdmin(); toast('Cannot split', o.id+' is now '+o.status+'.','error'); return; }
+  if(o.items.length!==document.querySelectorAll('#splitItemsBody .split-item').length){ closeModal('splitModal'); renderAdmin(); toast('Order changed','Items of '+o.id+' changed — open Split again.','error'); return; }
   var selectedIdx=[];
   o.items.forEach(function(it,idx){
     var cb=document.getElementById('split_it_'+idx);
@@ -2076,7 +2299,7 @@ function restoreOrder(id){
 
 /* ── ORDER ACTIONS: Advance status / Cancel / Edit / Invoice / Print / Delete ── */
 function nextStatusAction(o){
-  if(o.status==='Cancelled')return null;
+  if(o.status==='Cancelled')return {label:'📦 Archive', fn:'archiveOrder'};
   if(o.status==='Pending')return {label:'↑ Mark Processing', fn:'advanceOrderStatus'};
   if(o.status==='Processing')return {label:'🚚 Mark Sent', fn:'openMarkSentModal'};
   if(o.status==='Sent')return {label:'⏳ Awaiting branch to confirm receipt', fn:null};
@@ -2087,7 +2310,7 @@ function advanceOrderStatus(id){
   var o=DB.orders.find(function(x){return x.id===id;});
   if(!o)return;
   var flow={Pending:'Processing'};
-  if(!flow[o.status])return;
+  if(!flow[o.status]||o.archived)return;
   o.status=flow[o.status];
   saveDB(DB);
   lastOrderSnapshot=snapshotOrders();
@@ -2102,7 +2325,8 @@ function openMarkSentModal(id){
 }
 function confirmMarkSent(){
   var o=DB.orders.find(function(x){return x.id===pendingFlowOrderId;});
-  if(!o)return;
+  if(!o){closeModal('sentModal');return;}
+  if(o.status!=='Processing'){ closeModal('sentModal'); renderRoot(); toast('Not changed', o.id+' is now '+o.status+' — it was changed on another device.','error'); return; }
   o.status='Sent';
   o.carrier=document.getElementById('sentCarrier').value.trim();
   saveDB(DB);
@@ -2136,17 +2360,23 @@ function toggleRcvIssue(idx){
 }
 function confirmMarkReceived(){
   var o=DB.orders.find(function(x){return x.id===pendingFlowOrderId;});
-  if(!o)return;
+  if(!o){closeModal('receiveModal');return;}
+  if(o.status!=='Sent'){ closeModal('receiveModal'); renderRoot(); toast('Not changed', o.id+' is now '+o.status+' — it was changed on another device.','error'); return; }
+  if(o.items.length!==document.querySelectorAll('#receiveItemsBody .rcv-item').length){ closeModal('receiveModal'); renderRoot(); toast('Order changed','The items of '+o.id+' changed just now — please open Mark Received again.','error'); return; }
   var shortageLines=[];
   o.items.forEach(function(it,idx){
     var qtyInp=document.getElementById('rcv_qty_'+idx);
     var issueCb=document.getElementById('rcv_issue_'+idx);
     var issueNoteInp=document.getElementById('rcv_issue_note_'+idx);
-    it.receivedQty=qtyInp?qtyInp.value.trim():it.qty;
+    // FIX: a blank box now means 0 received (it was ignored before),
+    // and quantities are compared as numbers (10.0 = 10)
+    var raw=qtyInp?qtyInp.value.trim():String(it.qty);
+    it.receivedQty=raw===''?'0':raw;
     it.hasIssue=!!(issueCb&&issueCb.checked);
     it.issueNote=it.hasIssue&&issueNoteInp?issueNoteInp.value.trim():'';
-    if(it.hasIssue || (it.receivedQty!==it.qty && it.receivedQty!=='')){
-      shortageLines.push(it.name+' — received '+(it.receivedQty||'0')+(it.unit?' '+it.unit:'')+' of '+it.qty+(it.unit?' '+it.unit:'')+(it.issueNote?' ('+it.issueNote+')':''));
+    var diff=receivedDiff(it);
+    if(it.hasIssue || diff){
+      shortageLines.push(it.name+' — received '+it.receivedQty+(it.unit?' '+it.unit:'')+' of '+it.qty+(it.unit?' '+it.unit:'')+(diff?' ('+diff+')':'')+(it.issueNote?' — '+it.issueNote:''));
     }
   });
   var overall=document.getElementById('receiveOverallNote').value.trim();
@@ -2170,6 +2400,8 @@ function confirmCancelOrder(id){
   btn.onclick=function(){
     var o=DB.orders.find(function(x){return x.id===id;});
     if(!o){closeModal('confirmModal');return;}
+    if(o.status!=='Pending'&&o.status!=='Processing'){ closeModal('confirmModal'); renderAdmin(); toast('Not cancelled', o.id+' is already '+o.status+'.','error'); return; }
+    o.prevStatus=o.status; // lets Revert bring it back
     o.status='Cancelled';
     saveDB(DB);
     closeModal('confirmModal');
@@ -2186,6 +2418,8 @@ function confirmDeleteOrder(id){
   btn.textContent='🗑 Delete';
   btn.className='btn btn-danger btn-block';
   btn.onclick=function(){
+    var cur=DB.orders.find(function(x){return x.id===id;});
+    if(cur && !cur.archived && (cur.status==='Sent'||cur.status==='Received')){ closeModal('confirmModal'); renderAdmin(); toast('Not deleted', id+' is now '+cur.status+' — it was changed on another device.','error'); return; }
     DB.orders=DB.orders.filter(function(x){return x.id!==id;});
     saveDB(DB);
     closeModal('confirmModal');
@@ -2197,9 +2431,11 @@ function confirmDeleteOrder(id){
 
 var editingOrderId=null;
 var editingOrderItems=[];
+function editLocked(o){ return !o || o.archived || ['Sent','Received','Cancelled'].indexOf(o.status)!==-1; }
 function openEditOrderModal(id){
   var o=DB.orders.find(function(x){return x.id===id;});
   if(!o)return;
+  if(editLocked(o)){toast('Locked', o.id+' is '+o.status+' and can no longer be edited.','error');return;}
   editingOrderId=id;
   editingOrderItems=o.items.map(function(it){
     var copy={}; for(var k in it){copy[k]=it[k];} return copy;
@@ -2245,10 +2481,13 @@ function saveEditOrder(){
   var o=DB.orders.find(function(x){return x.id===editingOrderId;});
   if(!o)return;
   syncEditOrderInputs();
+  if(editLocked(o)){ closeModal('editOrderModal'); renderAdmin(); toast('Locked', o.id+' is now '+o.status+' — it was changed on another device.','error'); return; }
   if(!editingOrderItems.length){
     toast('Cannot save','A request needs at least one item','error');
     return;
   }
+  var bad=editingOrderItems.filter(function(it){ return !it.name || !(qtyNum(it.qty)>0); });
+  if(bad.length){ toast('Check the items','Every item needs a name and a quantity more than 0.','error'); return; }
   o.items=editingOrderItems;
   var noteInp=document.getElementById('eo_note');
   if(noteInp)o.note=noteInp.value.trim();
@@ -2357,14 +2596,61 @@ function confirmClearBranch(id){
   openModal('confirmModal');
 }
 
+/* ── REPORT HELPERS (FIX: real number sums per unit) ── */
+var rptScope='All';   // All | Active | Archived
+function addUnits(units, qty, unit){
+  var c=canonUnit(unit), n=qtyNum(qty);
+  if(!isFinite(n))return;
+  units[c.unit]=r3((units[c.unit]||0)+n*c.factor);
+}
+function qtyText(units){
+  var ks=Object.keys(units||{});
+  if(!ks.length)return '—';
+  return ks.map(function(u){ return fmtQty(units[u])+(u?' '+u:''); }).join(' · ');
+}
+function unitsTotal(units){ return Object.keys(units||{}).reduce(function(a,k){return a+units[k];},0); }
+/* An order has an issue if it was cancelled, or the branch received a
+   different amount than ordered, or flagged a problem on an item. */
+function orderIssue(o){
+  if(o.status==='Cancelled')return {type:'Cancelled', text:o.cancelNote||o.note||'Cancelled'};
+  if(o.status!=='Received')return null;
+  var lines=[];
+  (o.items||[]).forEach(function(it){
+    var diff=receivedDiff(it);
+    if(it.hasIssue || diff) lines.push(it.name+(diff?' — '+diff:'')+(it.issueNote?' ('+it.issueNote+')':''));
+  });
+  if(!lines.length && !o.receivedNote)return null;
+  return {type:'Delivery issue', text:lines.length?lines.join('; '):o.receivedNote};
+}
+/* '' = not checked (older data); otherwise "short 2 Kg" / "extra 1 Kg" / null when equal */
+function receivedDiff(it){
+  if(it.receivedQty===undefined || it.receivedQty===null)return null;
+  if(String(it.receivedQty).trim()==='')return null; // older data: box left blank, not checked (new saves store '0')
+  var got=qtyNum(it.receivedQty), want=qtyNum(it.qty);
+  if(!isFinite(got)||!isFinite(want))return null;
+  var d=r3(got-want);
+  if(Math.abs(d)<0.0005)return null;
+  return (d<0?'short ':'extra ')+fmtQty(Math.abs(d))+(it.unit?' '+it.unit:'');
+}
+function reportOrders(){
+  return DB.orders.filter(function(o){
+    if(rptScope==='Active')return !o.archived;
+    if(rptScope==='Archived')return !!o.archived;
+    return true;
+  });
+}
+
 function buildOverview(){
-  var orders=DB.orders.filter(function(o){return o.archived;});
+  /* FIX: the report used ONLY archived orders, so current Pending /
+     Processing / Sent / Received orders were missing. It now covers all
+     orders, with a scope filter (All / Active / Archived). */
+  var orders=reportOrders();
 
   var itemRowsAll=[];
   orders.forEach(function(o){
     var b=getBranch(o.branchId);
-    o.items.forEach(function(it){
-      itemRowsAll.push({branchId:o.branchId, branch:b?b.name:'—', cat:it.catName||'—', catEmoji:it.catEmoji||'📦', name:it.name, qty:it.qty, receivedQty:(it.receivedQty!==undefined && it.receivedQty!==''?it.receivedQty:''), unit:it.unit||'', priority:it.priority, status:o.status, date:o.ts, orderId:o.id, mkey:monthKey(o.ts)});
+    (o.items||[]).forEach(function(it){
+      itemRowsAll.push({branchId:o.branchId, branch:b?b.name:'—', cat:it.catName||'—', catEmoji:it.catEmoji||'📦', name:it.name, qty:it.qty, receivedQty:(it.receivedQty!==undefined && it.receivedQty!==null?it.receivedQty:''), rcvDiff:receivedDiff(it), unit:it.unit||'', priority:it.priority, status:o.status, date:o.ts, orderId:o.id, mkey:monthKey(o.ts)});
     });
   });
 
@@ -2372,67 +2658,62 @@ function buildOverview(){
   var itemNames=uniqueSorted(itemRowsAll.map(function(r){return r.name;}));
   var monthKeys=uniqueSorted(itemRowsAll.map(function(r){return r.mkey;})).sort().reverse();
 
-  var branchOpts='<option value="All">All Branches</option>'+DB.branches.map(function(b){return '<option value="'+b.id+'"'+(rptBranch===b.id?' selected':'')+'>'+esc(b.name)+'</option>';}).join('');
+  var scopeOpts=[['All','All orders'],['Active','Active only'],['Archived','Archived only']].map(function(x){return '<option value="'+x[0]+'"'+(rptScope===x[0]?' selected':'')+'>'+x[1]+'</option>';}).join('');
+  var branchOpts='<option value="All">All Branches</option>'+DB.branches.map(function(b){return '<option value="'+esc(b.id)+'"'+(rptBranch===b.id?' selected':'')+'>'+esc(b.name)+'</option>';}).join('');
   var catOpts='<option value="All">All Categories</option>'+catNames.map(function(c){return '<option value="'+esc(c)+'"'+(rptCategory===c?' selected':'')+'>'+esc(c)+'</option>';}).join('');
   var itemOpts='<option value="All">All Items</option>'+itemNames.map(function(n){return '<option value="'+esc(n)+'"'+(rptItem===n?' selected':'')+'>'+esc(n)+'</option>';}).join('');
   var monthOpts='<option value="All">All Months</option>'+monthKeys.map(function(k){return '<option value="'+k+'"'+(rptMonth===k?' selected':'')+'>'+monthLabel(k)+'</option>';}).join('');
 
-  var itemRows=itemRowsAll.filter(function(r){
-    if(rptBranch!=='All' && r.branchId!==rptBranch)return false;
-    if(rptCategory!=='All' && r.cat!==rptCategory)return false;
-    if(rptItem!=='All' && r.name!==rptItem)return false;
-    if(rptMonth!=='All' && r.mkey!==rptMonth)return false;
-    return true;
-  });
+  var itemRows=itemRowsAll.filter(rptRowMatch);
   itemRows.sort(function(a,c){return c.date-a.date;});
+  // cancelled requests were never delivered → not counted in quantity totals
+  var qtyRows=itemRows.filter(function(r){return r.status!=='Cancelled';});
 
   var orderIdsInFilter={};
   itemRows.forEach(function(r){orderIdsInFilter[r.orderId]=true;});
   var includedOrders=orders.filter(function(o){return orderIdsInFilter[o.id];});
-  var s={
-    total:includedOrders.length,
-    Pending:includedOrders.filter(function(o){return o.status==='Pending';}).length,
-    Processing:includedOrders.filter(function(o){return o.status==='Processing';}).length,
-    Arranged:includedOrders.filter(function(o){return o.status==='Arranged'||o.status==='Sent'||o.status==='Received';}).length
-  };
+  var cnt=function(st){return includedOrders.filter(function(o){return o.status===st;}).length;};
+  var s={ total:includedOrders.length, Pending:cnt('Pending'), Processing:cnt('Processing'),
+          Done:includedOrders.filter(function(o){return o.status==='Sent'||o.status==='Received'||o.status==='Arranged';}).length,
+          Cancelled:cnt('Cancelled') };
   var totalItems=itemRows.length;
 
   var byBranchMap={};
   itemRows.forEach(function(r){
-    byBranchMap[r.branchId]=byBranchMap[r.branchId]||{branchId:r.branchId,branch:r.branch,items:0,orders:{}};
-    byBranchMap[r.branchId].items++;
+    byBranchMap[r.branchId]=byBranchMap[r.branchId]||{branch:r.branch,orders:{}};
     byBranchMap[r.branchId].orders[r.orderId]=true;
   });
-  var ordersByBranch=Object.keys(byBranchMap).map(function(k){
-    var x=byBranchMap[k];
-    return {label:x.branch, count:Object.keys(x.orders).length, items:x.items};
-  }).sort(function(a,c){return c.count-a.count;});
+  var ordersByBranch=Object.keys(byBranchMap).map(function(k){ return {label:byBranchMap[k].branch, count:Object.keys(byBranchMap[k].orders).length}; }).sort(function(a,c){return c.count-a.count;});
 
-  var cancelledOrders=includedOrders.filter(function(o){return o.status==='Cancelled';});
+  /* FIX: "Issues" now = cancelled orders AND delivery problems (short /
+     extra / flagged items). Before it only counted cancelled orders —
+     which could never be archived, so it always showed 0. */
+  var issueOrders=includedOrders.map(function(o){ var is=orderIssue(o); return is?{o:o,issue:is}:null; }).filter(Boolean);
   var issuesByBranch={};
-  cancelledOrders.forEach(function(o){
-    var b=getBranch(o.branchId);
-    var key=o.branchId||'—';
+  issueOrders.forEach(function(x){
+    var b=getBranch(x.o.branchId), key=x.o.branchId||'—';
     issuesByBranch[key]=issuesByBranch[key]||{branch:b?b.name:'Unknown branch',rows:[]};
-    issuesByBranch[key].rows.push(o);
+    issuesByBranch[key].rows.push(x);
   });
   var issueBranchKeys=Object.keys(issuesByBranch).sort(function(a,c){return issuesByBranch[c].rows.length-issuesByBranch[a].rows.length;});
 
   var byItemNameMap={};
-  itemRows.forEach(function(r){ byItemNameMap[r.name]=(byItemNameMap[r.name]||0)+1; });
+  qtyRows.forEach(function(r){ byItemNameMap[r.name]=(byItemNameMap[r.name]||0)+1; });
   var topItemName=Object.keys(byItemNameMap).sort(function(a,c){return byItemNameMap[c]-byItemNameMap[a];})[0];
 
   var tableRows=itemRows.map(function(r){
+    var rc = r.receivedQty!=='' ? (r.rcvDiff?'<span style="color:var(--danger);font-weight:600" title="'+esc(r.rcvDiff)+'">'+esc(String(r.receivedQty)===''?'0':r.receivedQty)+'</span>':esc(r.receivedQty)) : '<span style="color:var(--muted)">—</span>';
     return '<tr><td class="mono">'+esc(r.orderId)+'</td><td>'+esc(r.branch)+'</td><td>'+esc(r.cat)+'</td><td>'+esc(r.name)+'</td><td>'+esc(r.qty)+'</td>'
-      +'<td>'+(r.receivedQty!==''?(String(r.receivedQty)!==String(r.qty)?'<span style="color:var(--danger);font-weight:600">'+esc(r.receivedQty)+'</span>':esc(r.receivedQty)):'<span style="color:var(--muted)">—</span>')+'</td>'
+      +'<td>'+rc+'</td>'
       +'<td>'+esc(r.unit||'—')+'</td>'
-      +'<td>'+(r.priority==='High'?'⚡ High':'Normal')+'</td><td><span class="status-badge status-'+r.status+'">'+r.status+'</span></td>'
+      +'<td>'+(r.priority==='High'?'⚡ High':'Normal')+'</td><td><span class="status-badge status-'+esc(r.status)+'">'+esc(r.status)+'</span></td>'
       +'<td class="mono" style="font-size:11.5px">'+fmtDate(r.date)+'</td></tr>';
   }).join('');
 
   return '<div class="card">'
       +'<div class="card-head"><span class="card-title">Report Filters</span><button class="btn btn-outline" onclick="resetRptFilters()">↺ Reset</button></div>'
       +'<div class="rpt-filters">'
+        +'<div class="field" style="margin-bottom:0"><label>Orders</label><select class="fselect" onchange="rptScope=this.value;renderAdmin()">'+scopeOpts+'</select></div>'
         +'<div class="field" style="margin-bottom:0"><label>Branch</label><select class="fselect" onchange="rptBranch=this.value;renderAdmin()">'+branchOpts+'</select></div>'
         +'<div class="field" style="margin-bottom:0"><label>Category</label><select class="fselect" onchange="rptCategory=this.value;renderAdmin()">'+catOpts+'</select></div>'
         +'<div class="field" style="margin-bottom:0"><label>Item</label><select class="fselect" onchange="rptItem=this.value;renderAdmin()">'+itemOpts+'</select></div>'
@@ -2441,33 +2722,33 @@ function buildOverview(){
     +'</div>'
     +'<div class="stats-row">'
       +'<div class="stat"><div class="stat-label">Requests</div><div class="stat-value">'+s.total+'</div></div>'
-      +'<div class="stat"><div class="stat-label">Items</div><div class="stat-value">'+totalItems+'</div></div>'
-      +'<div class="stat gold"><div class="stat-label">Pending</div><div class="stat-value">'+s.Pending+'</div></div>'
-      +'<div class="stat teal"><div class="stat-label">Arranged / Sent</div><div class="stat-value">'+s.Arranged+'</div></div>'
+      +'<div class="stat"><div class="stat-label">Item lines</div><div class="stat-value">'+totalItems+'</div></div>'
+      +'<div class="stat gold"><div class="stat-label">Pending / Processing</div><div class="stat-value">'+(s.Pending+s.Processing)+'</div></div>'
+      +'<div class="stat teal"><div class="stat-label">Sent / Received</div><div class="stat-value">'+s.Done+'</div></div>'
     +'</div>'
     +'<div class="card">'
       +'<div class="card-head"><span class="card-title">Summary</span></div>'
       +'<div class="rpt-summary-grid">'
         +'<div class="rpt-summary-item"><div class="lbl">Total Requests</div><div class="val">'+s.total+'</div></div>'
-        +'<div class="rpt-summary-item"><div class="lbl">Total Items</div><div class="val">'+totalItems+'</div></div>'
+        +'<div class="rpt-summary-item"><div class="lbl">Total Item Lines</div><div class="val">'+totalItems+'</div></div>'
         +'<div class="rpt-summary-item"><div class="lbl">Branches Involved</div><div class="val">'+ordersByBranch.length+'</div></div>'
-        +'<div class="rpt-summary-item"><div class="lbl">Cancelled / Issues</div><div class="val">'+cancelledOrders.length+'</div></div>'
+        +'<div class="rpt-summary-item"><div class="lbl">Cancelled / Issues</div><div class="val">'+issueOrders.length+'</div></div>'
         +'<div class="rpt-summary-item"><div class="lbl">Top Branch</div><div class="val" style="font-size:13.5px">'+(ordersByBranch.length?esc(ordersByBranch[0].label):'—')+'</div></div>'
         +'<div class="rpt-summary-item"><div class="lbl">Top Item</div><div class="val" style="font-size:13.5px">'+(topItemName?esc(topItemName):'—')+'</div></div>'
       +'</div>'
     +'</div>'
-    +buildTrendsReport(itemRows, itemRowsAll)
-    +buildItemsByCategoryReport(itemRows)
-    +buildItemsByBranchReport(itemRows)
+    +buildTrendsReport(qtyRows, itemRowsAll.filter(function(r){return r.status!=='Cancelled';}))
+    +buildItemsByCategoryReport(qtyRows)
+    +buildItemsByBranchReport(qtyRows)
     +'<div class="card">'
-      +'<div class="card-head"><span class="card-title">Branch Issue Reports</span><span class="card-note">'+cancelledOrders.length+' cancelled</span></div>'
+      +'<div class="card-head"><span class="card-title">Cancelled &amp; Delivery Issues</span><span class="card-note">'+issueOrders.length+' order'+(issueOrders.length!==1?'s':'')+'</span></div>'
       +(issueBranchKeys.length? issueBranchKeys.map(function(k){
           var grp=issuesByBranch[k];
-          var rows=grp.rows.map(function(o){
-            return '<div class="rpt-issue-row"><span class="oid mono">'+esc(o.id)+'</span><span class="note">'+(o.note?esc(o.note):'No note')+'</span><span class="dt mono">'+fmtDate(o.ts)+'</span></div>';
+          var rows=grp.rows.map(function(x){
+            return '<div class="rpt-issue-row"><span class="oid mono">'+esc(x.o.id)+'</span><span class="note"><b>'+esc(x.issue.type)+':</b> '+esc(x.issue.text)+'</span><span class="dt mono">'+fmtDate(x.o.ts)+'</span></div>';
           }).join('');
           return '<div class="rpt-issue-branch"><div class="rpt-issue-branch-head">'+esc(grp.branch)+' · '+grp.rows.length+' issue'+(grp.rows.length!==1?'s':'')+'</div>'+rows+'</div>';
-        }).join('') : '<div class="empty-box">No issues reported for this filter. 🎉</div>')
+        }).join('') : '<div class="empty-box">No cancelled orders or delivery issues for this filter. 🎉</div>')
     +'</div>'
     +'<div class="card">'
       +'<div class="card-head"><span class="card-title">Full Item Report</span><button class="btn btn-outline" onclick="exportCsv()">⬇ Export CSV</button></div>'
@@ -2476,12 +2757,17 @@ function buildOverview(){
         : '<div class="empty-box"><div class="em">📄</div>No requests match this filter.</div>')
     +'</div>';
 }
+function rptRowMatch(r){
+  if(rptBranch!=='All' && r.branchId!==rptBranch)return false;
+  if(rptCategory!=='All' && r.cat!==rptCategory)return false;
+  if(rptItem!=='All' && r.name!==rptItem)return false;
+  if(rptMonth!=='All' && r.mkey!==rptMonth)return false;
+  return true;
+}
 
 /* ── TRENDS ── */
 function buildTrendsReport(itemRows, itemRowsAll){
-  // Monthly volume ignores the month filter specifically (otherwise the
-  // trend would collapse to a single bar), but still respects branch/
-  // category/item filters so the trend matches what's being explored.
+  // Monthly volume ignores the month filter (otherwise it collapses to one bar)
   var trendRows=itemRowsAll.filter(function(r){
     if(rptBranch!=='All' && r.branchId!==rptBranch)return false;
     if(rptCategory!=='All' && r.cat!==rptCategory)return false;
@@ -2490,38 +2776,34 @@ function buildTrendsReport(itemRows, itemRowsAll){
   });
   var byMonth={};
   trendRows.forEach(function(r){
-    byMonth[r.mkey]=byMonth[r.mkey]||{orders:{},items:0};
+    byMonth[r.mkey]=byMonth[r.mkey]||{orders:{}};
     byMonth[r.mkey].orders[r.orderId]=true;
-    byMonth[r.mkey].items++;
   });
-  var monthData=Object.keys(byMonth).sort().map(function(k){
-    return {label:monthLabel(k), orders:Object.keys(byMonth[k].orders).length};
-  });
+  var monthData=Object.keys(byMonth).sort().map(function(k){ return {label:monthLabel(k), orders:Object.keys(byMonth[k].orders).length}; });
   var maxOrders=Math.max.apply(null,monthData.map(function(m){return m.orders;}).concat([1]));
   var monthBars=monthData.map(function(m){
     var pct=Math.max(4,Math.round((m.orders/maxOrders)*100));
     return '<div class="trend-row"><span class="trend-lbl">'+esc(m.label)+'</span><div class="trend-track"><div class="trend-fill" style="width:'+pct+'%"></div></div><span class="trend-val">'+m.orders+' request'+(m.orders!==1?'s':'')+'</span></div>';
   }).join('');
 
-  // Top items ranked by how many requests included them (respects all
-  // current filters, including month, since this is "top items right now").
+  // FIX: quantities summed as real numbers (2.5 stays 2.5) and per unit (g → Kg)
   var byItem={};
   itemRows.forEach(function(r){
-    byItem[r.name]=byItem[r.name]||{qty:0,lines:0,unit:r.unit||''};
-    byItem[r.name].qty+=(parseInt(r.qty,10)||0);
+    byItem[r.name]=byItem[r.name]||{lines:0,units:{}};
     byItem[r.name].lines++;
+    addUnits(byItem[r.name].units, r.qty, r.unit);
   });
-  var topItems=Object.keys(byItem).map(function(n){return {name:n,qty:byItem[n].qty,lines:byItem[n].lines,unit:byItem[n].unit};})
-    .sort(function(a,c){return c.lines-a.lines;})
+  var topItems=Object.keys(byItem).map(function(n){return {name:n,lines:byItem[n].lines,units:byItem[n].units};})
+    .sort(function(a,c){return c.lines-a.lines || unitsTotal(c.units)-unitsTotal(a.units);})
     .slice(0,10);
   var maxLines=Math.max.apply(null,topItems.map(function(i){return i.lines;}).concat([1]));
   var itemBars=topItems.map(function(it){
     var pct=Math.max(4,Math.round((it.lines/maxLines)*100));
-    return '<div class="trend-row"><span class="trend-lbl" title="'+esc(it.name)+'">'+esc(it.name)+'</span><div class="trend-track"><div class="trend-fill gold" style="width:'+pct+'%"></div></div><span class="trend-val">'+it.lines+'× · '+it.qty+(it.unit?' '+esc(it.unit):'')+'</span></div>';
+    return '<div class="trend-row"><span class="trend-lbl" title="'+esc(it.name)+'">'+esc(it.name)+'</span><div class="trend-track"><div class="trend-fill gold" style="width:'+pct+'%"></div></div><span class="trend-val">'+it.lines+'× · '+esc(qtyText(it.units))+'</span></div>';
   }).join('');
 
   return '<div class="card">'
-    +'<div class="card-head"><span class="card-title">📈 Trends</span><span class="card-note">Based on archived / completed requests</span></div>'
+    +'<div class="card-head"><span class="card-title">📈 Trends</span><span class="card-note">'+({All:'All orders',Active:'Active orders',Archived:'Archived orders'}[rptScope])+'</span></div>'
     +'<div class="trend-block"><div class="trend-block-title">Requests per Month</div>'
       +(monthBars||'<div class="empty-box">Not enough history yet.</div>')
     +'</div>'
@@ -2537,38 +2819,27 @@ function buildItemsByBranchReport(itemRows){
     var key=r.branchId||'—';
     byBranch[key]=byBranch[key]||{name:r.branch||'Unknown', lines:0, itemMap:{}};
     byBranch[key].lines++;
-    var cat=r.cat||'—';
-    var ikey=r.name+'␟'+cat;
-    byBranch[key].itemMap[ikey]=byBranch[key].itemMap[ikey]||{name:r.name, cat:cat, qty:0, unit:r.unit||''};
-    byBranch[key].itemMap[ikey].qty+=(parseInt(r.qty,10)||0);
+    var cat=r.cat||'—', ikey=r.name+'␟'+cat;
+    byBranch[key].itemMap[ikey]=byBranch[key].itemMap[ikey]||{name:r.name, cat:cat, lines:0, units:{}};
+    byBranch[key].itemMap[ikey].lines++;
+    addUnits(byBranch[key].itemMap[ikey].units, r.qty, r.unit);
   });
   var branches=Object.keys(byBranch).map(function(k){
     var b=byBranch[k];
     var items=Object.keys(b.itemMap).map(function(ik){return b.itemMap[ik];})
-      .sort(function(a,c){return c.qty-a.qty;});
+      .sort(function(a,c){return unitsTotal(c.units)-unitsTotal(a.units) || c.lines-a.lines;});
     return {name:b.name, lines:b.lines, items:items};
   }).sort(function(a,c){return c.lines-a.lines;});
-
   var cards=branches.map(function(b){
-    var top=b.items.slice(0,8);
-    var rest=b.items.length-top.length;
+    var top=b.items.slice(0,8), rest=b.items.length-top.length;
     var rows=top.map(function(it){
-      return '<div class="cbr-item-row"><span class="cbr-item-name">'+esc(it.name)+'<span class="cbr-item-cat"> · '+esc(it.cat)+'</span></span><span class="cbr-item-qty">×'+it.qty+(it.unit?' '+esc(it.unit):'')+'</span></div>';
+      return '<div class="cbr-item-row"><span class="cbr-item-name">'+esc(it.name)+'<span class="cbr-item-cat"> · '+esc(it.cat)+'</span></span><span class="cbr-item-qty">'+esc(qtyText(it.units))+'</span></div>';
     }).join('');
-    return '<div class="cbr-card teal">'
-      +'<div class="cbr-card-head">'
-        +'<span class="cbr-card-title">🏬 '+esc(b.name)+'</span>'
-        +'<span class="cbr-badge">'+b.lines+' item line'+(b.lines!==1?'s':'')+'</span>'
-      +'</div>'
-      +(rows||'<div class="cbr-empty">No items</div>')
-      +(rest>0?'<div class="cbr-more">+'+rest+' more…</div>':'')
-    +'</div>';
+    return '<div class="cbr-card teal"><div class="cbr-card-head"><span class="cbr-card-title">🏬 '+esc(b.name)+'</span><span class="cbr-badge">'+b.lines+' item line'+(b.lines!==1?'s':'')+'</span></div>'
+      +(rows||'<div class="cbr-empty">No items</div>')+(rest>0?'<div class="cbr-more">+'+rest+' more…</div>':'')+'</div>';
   }).join('');
-
-  return '<div class="card">'
-    +'<div class="card-head"><span class="card-title">🏬 Items by Branch</span><span class="card-note">'+branches.length+' branch'+(branches.length!==1?'es':'')+'</span></div>'
-    +(cards?'<div class="cbr-grid">'+cards+'</div>':'<div class="empty-box"><div class="em">🏬</div>No items match this filter.</div>')
-  +'</div>';
+  return '<div class="card"><div class="card-head"><span class="card-title">🏬 Items by Branch</span><span class="card-note">'+branches.length+' branch'+(branches.length!==1?'es':'')+'</span></div>'
+    +(cards?'<div class="cbr-grid">'+cards+'</div>':'<div class="empty-box"><div class="em">🏬</div>No items match this filter.</div>')+'</div>';
 }
 
 function buildItemsByCategoryReport(itemRows){
@@ -2577,62 +2848,59 @@ function buildItemsByCategoryReport(itemRows){
     var key=r.cat||'—';
     byCat[key]=byCat[key]||{name:key, emoji:r.catEmoji||'📦', lines:0, itemMap:{}};
     byCat[key].lines++;
-    byCat[key].itemMap[r.name]=byCat[key].itemMap[r.name]||{qty:0, unit:r.unit||''};
-    byCat[key].itemMap[r.name].qty+=(parseInt(r.qty,10)||0);
+    byCat[key].itemMap[r.name]=byCat[key].itemMap[r.name]||{lines:0,units:{}};
+    byCat[key].itemMap[r.name].lines++;
+    addUnits(byCat[key].itemMap[r.name].units, r.qty, r.unit);
   });
   var cats=Object.keys(byCat).map(function(k){
     var c=byCat[k];
-    var items=Object.keys(c.itemMap).map(function(n){return {name:n, qty:c.itemMap[n].qty, unit:c.itemMap[n].unit};})
-      .sort(function(a,b){return b.qty-a.qty;});
+    var items=Object.keys(c.itemMap).map(function(n){return {name:n, units:c.itemMap[n].units, lines:c.itemMap[n].lines};})
+      .sort(function(a,b){return unitsTotal(b.units)-unitsTotal(a.units) || b.lines-a.lines;});
     return {name:c.name, emoji:c.emoji, lines:c.lines, items:items};
   }).sort(function(a,b){return b.lines-a.lines;});
-
   var cards=cats.map(function(c){
-    var top=c.items.slice(0,8);
-    var rest=c.items.length-top.length;
+    var top=c.items.slice(0,8), rest=c.items.length-top.length;
     var rows=top.map(function(it){
-      return '<div class="cbr-item-row"><span class="cbr-item-name">'+esc(it.name)+'</span><span class="cbr-item-qty">×'+it.qty+(it.unit?' '+esc(it.unit):'')+'</span></div>';
+      return '<div class="cbr-item-row"><span class="cbr-item-name">'+esc(it.name)+'</span><span class="cbr-item-qty">'+esc(qtyText(it.units))+'</span></div>';
     }).join('');
-    return '<div class="cbr-card">'
-      +'<div class="cbr-card-head">'
-        +'<span class="cbr-card-title">'+esc(c.emoji)+' '+esc(c.name)+'</span>'
-        +'<span class="cbr-badge">'+c.lines+' item line'+(c.lines!==1?'s':'')+'</span>'
-      +'</div>'
-      +(rows||'<div class="cbr-empty">No items</div>')
-      +(rest>0?'<div class="cbr-more">+'+rest+' more…</div>':'')
-    +'</div>';
+    return '<div class="cbr-card"><div class="cbr-card-head"><span class="cbr-card-title">'+esc(c.emoji)+' '+esc(c.name)+'</span><span class="cbr-badge">'+c.lines+' item line'+(c.lines!==1?'s':'')+'</span></div>'
+      +(rows||'<div class="cbr-empty">No items</div>')+(rest>0?'<div class="cbr-more">+'+rest+' more…</div>':'')+'</div>';
   }).join('');
-
-  return '<div class="card">'
-    +'<div class="card-head"><span class="card-title">📁 Items by Category</span><span class="card-note">'+cats.length+' categor'+(cats.length!==1?'ies':'y')+'</span></div>'
-    +(cards?'<div class="cbr-grid">'+cards+'</div>':'<div class="empty-box"><div class="em">🗂</div>No items match this filter.</div>')
-  +'</div>';
+  return '<div class="card"><div class="card-head"><span class="card-title">📁 Items by Category</span><span class="card-note">'+cats.length+' categor'+(cats.length!==1?'ies':'y')+'</span></div>'
+    +(cards?'<div class="cbr-grid">'+cards+'</div>':'<div class="empty-box"><div class="em">🗂</div>No items match this filter.</div>')+'</div>';
 }
 
 function resetRptFilters(){
-  rptBranch='All';rptCategory='All';rptItem='All';rptMonth='All';
+  rptScope='All';rptBranch='All';rptCategory='All';rptItem='All';rptMonth='All';
   renderAdmin();
 }
 
+/* FIX (CSV): BOM so Excel shows Sinhala/emoji correctly; text that starts
+   with = + - @ is prefixed so Excel doesn't run it as a formula; the
+   download link is released after the download has started. */
+function csvCell(v){
+  var t=String(v==null?'':v);
+  if(/^[=+\-@\t\r]/.test(t) && !/^-?\d+(\.\d+)?$/.test(t)) t="'"+t;
+  return '"'+t.replace(/"/g,'""')+'"';
+}
+function downloadCsv(rows, filename){
+  var csv='﻿'+rows.map(function(r){return r.map(csvCell).join(',');}).join('\r\n');
+  var url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  var a=document.createElement('a');
+  a.href=url; a.download=filename; document.body.appendChild(a); a.click();
+  setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 1500);
+}
 function exportCsv(){
-  var rows=[['Order ID','Branch','Category','Item','Ordered Qty','Received Qty','Unit','Priority','Status','Date']];
-  DB.orders.filter(function(o){return o.archived;}).forEach(function(o){
+  var rows=[['Order ID','Branch','Category','Item','Ordered Qty','Received Qty','Difference','Unit','Priority','Status','Archived','Date']];
+  reportOrders().forEach(function(o){
     var b=getBranch(o.branchId);
-    o.items.forEach(function(it){
+    (o.items||[]).forEach(function(it){
       var cat=it.catName||'—';
-      if(rptBranch!=='All' && o.branchId!==rptBranch)return;
-      if(rptCategory!=='All' && cat!==rptCategory)return;
-      if(rptItem!=='All' && it.name!==rptItem)return;
-      if(rptMonth!=='All' && monthKey(o.ts)!==rptMonth)return;
-      rows.push([o.id, b?b.name:'', cat, it.name, it.qty, (it.receivedQty!==undefined?it.receivedQty:''), it.unit||'', it.priority, o.status, fmtDate(o.ts)]);
+      if(!rptRowMatch({branchId:o.branchId, cat:cat, name:it.name, mkey:monthKey(o.ts)}))return;
+      rows.push([o.id, b?b.name:'', cat, it.name, it.qty, (it.receivedQty!==undefined&&it.receivedQty!==null?it.receivedQty:''), receivedDiff(it)||'', it.unit||'', it.priority, o.status, o.archived?'Yes':'No', fmtDate(o.ts)]);
     });
   });
-  var csv=rows.map(function(r){return r.map(function(v){return '"'+String(v).replace(/"/g,'""')+'"';}).join(',');}).join('\n');
-  var blob=new Blob([csv],{type:'text/csv'});
-  var url=URL.createObjectURL(blob);
-  var a=document.createElement('a');
-  a.href=url;a.download='windmill_full_report.csv';a.click();
-  URL.revokeObjectURL(url);
+  downloadCsv(rows, 'windmill_full_report.csv');
   toast('Exported','Report downloaded as CSV','success');
 }
 
@@ -2641,9 +2909,9 @@ function buildBranchesTab(){
   var rows=DB.branches.map(function(b){
     var count=DB.orders.filter(function(o){return o.branchId===b.id;}).length;
     return '<div class="list-row"><div class="stamp sm gold">'+iconHtml(b.emoji||'🏬')+'</div>'
-      +'<div class="info"><div class="lbl">'+esc(b.name)+'</div><div class="sub">Password: <span class="mono">'+esc(b.password)+'</span> · '+count+' request'+(count!==1?'s':'')+'</div></div>'
-      +'<div class="actions"><button class="btn btn-outline" onclick="openEditBranch(\''+b.id+'\')">Edit</button>'
-      +'<button class="btn btn-danger" onclick="confirmDeleteBranch(\''+b.id+'\')">Delete</button></div>'
+      +'<div class="info"><div class="lbl">'+esc(b.name)+' <span class="mono" style="font-size:11px;color:var(--muted)">'+esc(branchCode(b))+'</span></div><div class="sub">'+(b.pwV?'🔒 Password set':'⚠ Password not secured yet — it will be secured at next login')+' · '+count+' request'+(count!==1?'s':'')+'</div></div>'
+      +'<div class="actions"><button class="btn btn-outline" onclick="openEditBranch('+jsa(b.id)+')">Edit</button>'
+      +'<button class="btn btn-danger" onclick="confirmDeleteBranch('+jsa(b.id)+')">Delete</button></div>'
     +'</div>';
   }).join('');
   return '<div class="card">'
@@ -2653,24 +2921,32 @@ function buildBranchesTab(){
   +'</div>'
   +'<div class="card">'
     +'<div class="card-head"><span class="card-title">Main Branch Password</span></div>'
-    +'<div class="field"><label>Admin Password</label><input class="finput" id="adminPwField" value="'+esc(DB.adminPassword)+'"></div>'
+    +'<div class="card-note" style="margin-bottom:10px">Passwords are stored as a secure hash and cannot be shown. Type a new one to change it.</div>'
+    +'<div class="field"><label>New admin password</label><input class="finput" id="adminPwField" type="password" autocomplete="new-password" placeholder="At least 6 characters"></div>'
+    +'<div class="field"><label>Repeat new password</label><input class="finput" id="adminPwField2" type="password" autocomplete="new-password"></div>'
     +'<button class="btn btn-primary" onclick="saveAdminPassword()">Update Password</button>'
   +'</div>';
 }
 function saveAdminPassword(){
   var v=document.getElementById('adminPwField').value.trim();
-  if(!v){toast('Password required','Enter a password first.','error');return;}
-  DB.adminPassword=v; saveDB(DB);
-  toast('Updated','Main branch password changed','success');
+  var v2=(document.getElementById('adminPwField2')||{}).value;
+  if(v.length<6){toast('Too short','Use at least 6 characters.','error');return;}
+  if(v2!==undefined && v2.trim()!==v){toast('Passwords differ','The two passwords do not match.','error');return;}
+  var tok=setPw(DB, v, true);
+  session={role:'admin', t:tok};
+  try{ localStorage.setItem('windmill_session', JSON.stringify(session)); }catch(e){}
+  saveDB(DB);
+  document.getElementById('adminPwField').value=''; if(document.getElementById('adminPwField2'))document.getElementById('adminPwField2').value='';
+  toast('Updated','Main branch password changed. Other devices logged in as admin must log in again.','success');
 }
 function renderLogoPicker(selected){
   var grid=document.getElementById('bm_logoGrid');
   if(!grid)return;
   grid.innerHTML=BRANCH_LOGOS.map(function(emo){
     var inner = emo.indexOf('data:')===0
-      ? '<img src="'+emo+'" style="width:78%;height:78%;object-fit:contain;">'
-      : emo;
-    return '<div class="logo-option'+(emo===selected?' selected':'')+'" onclick="selectBranchLogo(\''+emo+'\')">'+inner+'</div>';
+      ? (isSafeDataImg(emo)?'<img src="'+emo+'" style="width:78%;height:78%;object-fit:contain;">':'🏬')
+      : esc(emo);
+    return '<div class="logo-option'+(emo===selected?' selected':'')+'" onclick="selectBranchLogo('+jsa(emo)+')">'+inner+'</div>';
   }).join('');
 }
 function selectBranchLogo(emo){
@@ -2685,6 +2961,7 @@ function openAddBranch(){
   document.getElementById('bm_code').value='';
   document.getElementById('bm_emoji').value=BRANCH_LOGOS[0];
   document.getElementById('bm_pw').value='';
+  document.getElementById('bm_pw').placeholder='branch password';
   renderLogoPicker(BRANCH_LOGOS[0]);
   openModal('branchModal');
 }
@@ -2695,7 +2972,8 @@ function openEditBranch(id){
   document.getElementById('bm_name').value=b.name;
   document.getElementById('bm_code').value=b.code||branchCode(b);
   document.getElementById('bm_emoji').value=b.emoji||BRANCH_LOGOS[0];
-  document.getElementById('bm_pw').value=b.password;
+  document.getElementById('bm_pw').value='';
+  document.getElementById('bm_pw').placeholder='Leave empty to keep the current password';
   renderLogoPicker(b.emoji||BRANCH_LOGOS[0]);
   openModal('branchModal');
 }
@@ -2703,7 +2981,9 @@ function saveBranchModal(){
   var name=document.getElementById('bm_name').value.trim();
   var emoji=document.getElementById('bm_emoji').value.trim()||BRANCH_LOGOS[0];
   var pw=document.getElementById('bm_pw').value.trim();
-  if(!name||!pw){toast('Missing info','Name and password are required.','error');return;}
+  if(!name){toast('Missing info','Branch name is required.','error');return;}
+  if(!editingBranchId && !pw){toast('Missing info','Set a password for the new branch.','error');return;}
+  if(pw && pw.length<4){toast('Too short','Use at least 4 characters for the branch password.','error');return;}
   var code=document.getElementById('bm_code').value.trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
   if(!code)code=branchCode({name:name});
   if(code.length<2){toast('Branch code too short','Use 2–5 letters or numbers.','error');return;}
@@ -2711,10 +2991,12 @@ function saveBranchModal(){
   if(clash){toast('Code already used', code+' is already used by '+clash.name+'. Pick a different code.','error');return;}
   if(editingBranchId){
     var b=getBranch(editingBranchId);
-    b.name=name;b.emoji=emoji;b.password=pw;b.code=code;
+    b.name=name;b.emoji=emoji;b.code=code;
+    if(pw) setPw(b, pw, false);   // empty = keep the current password
   }else{
     if(DB.branches.length>=MAX_BRANCHES){toast('Limit reached','Only '+MAX_BRANCHES+' branches allowed.','error');return;}
-    DB.branches.push({id:uid('br'),name:name,emoji:emoji,password:pw,code:code});
+    var nb={id:uid('br'),name:name,emoji:emoji,code:code}; setPw(nb, pw, false);
+    DB.branches.push(nb);
   }
   saveDB(DB);
   closeModal('branchModal');
@@ -2757,7 +3039,7 @@ function buildCatMgrBody(){
 function buildCatMgrCard(c){
   var items=c.items||[];
   var chips=items.map(function(name,idx){
-    return '<span class="cm-chip">'+esc(name)+'<button class="cm-chip-x" onclick="removeCatItemInline(\''+c.id+'\','+idx+')" title="Remove">✕</button></span>';
+    return '<span class="cm-chip">'+esc(name)+'<button class="cm-chip-x" onclick="removeCatItemInline('+jsa(c.id)+','+jsa(name)+')" title="Remove">✕</button></span>';
   }).join('');
   return '<div class="cm-cat-card">'
     +'<div class="cm-cat-head">'
@@ -2765,14 +3047,14 @@ function buildCatMgrCard(c){
       +'<div class="cm-cat-name">'+esc(c.name)+'</div>'
       +'<span class="cm-cat-count">'+items.length+' item'+(items.length!==1?'s':'')+(c.unit?' · '+esc(c.unit):'')+'</span>'
       +'<div class="cm-cat-actions">'
-        +'<button class="cm-icon-btn" onclick="openEditCat(\''+c.id+'\')" title="Edit category">✎</button>'
-        +'<button class="cm-icon-btn danger" onclick="confirmDeleteCat(\''+c.id+'\')" title="Delete category">🗑</button>'
+        +'<button class="cm-icon-btn" onclick="openEditCat('+jsa(c.id)+')" title="Edit category">✎</button>'
+        +'<button class="cm-icon-btn danger" onclick="confirmDeleteCat('+jsa(c.id)+')" title="Delete category">🗑</button>'
       +'</div>'
     +'</div>'
     +(chips?'<div class="cm-chips">'+chips+'</div>':'<div class="cm-empty-chip">No sub-items yet — add one below.</div>')
     +'<div class="cm-add-row">'
-      +'<input type="text" id="cmadd_'+c.id+'" placeholder="Add sub-item..." onkeydown="if(event.key===\'Enter\')addCatItemInline(\''+c.id+'\')">'
-      +'<button onclick="addCatItemInline(\''+c.id+'\')">＋ Add</button>'
+      +'<input type="text" id="cmadd_'+c.id+'" placeholder="Add sub-item..." onkeydown="if(event.key===\'Enter\')addCatItemInline('+jsa(c.id)+')">'
+      +'<button onclick="addCatItemInline('+jsa(c.id)+')">＋ Add</button>'
     +'</div>'
   +'</div>';
 }
@@ -2791,9 +3073,11 @@ function addCatItemInline(catId){
   var newInp=document.getElementById('cmadd_'+catId);
   if(newInp)newInp.focus();
 }
-function removeCatItemInline(catId,idx){
+function removeCatItemInline(catId,name){
   var c=getCat(catId);
   if(!c||!c.items)return;
+  var idx=c.items.indexOf(name); // FIX: by name, so a live update can't remove the wrong item
+  if(idx===-1)return;
   var removed=c.items[idx];
   c.items.splice(idx,1);
   saveDB(DB);
@@ -2805,8 +3089,8 @@ function buildCategoriesTab(){
   var rows=DB.categories.map(function(c){
     return '<div class="list-row"><div class="stamp sm teal">'+esc(c.emoji||'📦')+'</div>'
       +'<div class="info"><div class="lbl">'+esc(c.name)+(c.unit?' <span style="font-size:11px;font-weight:600;color:var(--teal);background:var(--teal-bg);border-radius:10px;padding:2px 8px;margin-left:4px">'+esc(c.unit)+'</span>':'')+'</div><div class="sub">'+(c.items||[]).length+' items: '+esc((c.items||[]).slice(0,4).join(', '))+((c.items||[]).length>4?'…':'')+'</div></div>'
-      +'<div class="actions"><button class="btn btn-outline" onclick="openEditCat(\''+c.id+'\')">Edit</button>'
-      +'<button class="btn btn-danger" onclick="confirmDeleteCat(\''+c.id+'\')">Delete</button></div>'
+      +'<div class="actions"><button class="btn btn-outline" onclick="openEditCat('+jsa(c.id)+')">Edit</button>'
+      +'<button class="btn btn-danger" onclick="confirmDeleteCat('+jsa(c.id)+')">Delete</button></div>'
     +'</div>';
   }).join('');
   return '<div class="card">'
@@ -2816,7 +3100,10 @@ function buildCategoriesTab(){
   +'</div>';
 }
 function unitSelectOptions(selected){
-  return '<option value="">— None —</option>'+DB.units.map(function(u){
+  // FIX: keep a unit that was removed from the list but is still used by an item
+  var list=DB.units.slice();
+  if(selected && list.indexOf(selected)===-1) list.push(selected);
+  return '<option value="">— None —</option>'+list.map(function(u){
     return '<option value="'+esc(u)+'"'+(selected===u?' selected':'')+'>'+esc(u)+'</option>';
   }).join('');
 }
@@ -2824,7 +3111,7 @@ function renderCatIconPicker(selected){
   var grid=document.getElementById('cm_iconGrid');
   if(!grid)return;
   grid.innerHTML=CATEGORY_ICONS.map(function(emo){
-    return '<div class="logo-option'+(emo===selected?' selected':'')+'" onclick="selectCatIcon(\''+emo+'\')">'+emo+'</div>';
+    return '<div class="logo-option'+(emo===selected?' selected':'')+'" onclick="selectCatIcon('+jsa(emo)+')">'+emo+'</div>';
   }).join('');
 }
 function selectCatIcon(emo){
@@ -2884,7 +3171,7 @@ function buildUnitMgrBody(){
     return '<div class="empty-box"><div class="em">🏷</div>No units yet. Add your first one below.</div>';
   }
   var chips=DB.units.map(function(u,idx){
-    return '<span class="unit-chip">'+esc(u)+'<button class="cm-chip-x" onclick="removeUnit('+idx+')" title="Remove">✕</button></span>';
+    return '<span class="unit-chip">'+esc(u)+'<button class="cm-chip-x" onclick="removeUnit('+jsa(u)+')" title="Remove">✕</button></span>';
   }).join('');
   return '<div class="unit-chips-wrap">'+chips+'</div>';
 }
@@ -2901,8 +3188,13 @@ function addUnit(){
   inp.focus();
   toast('Added',val+' added to units','success');
 }
-function removeUnit(idx){
+function removeUnit(name){
+  var idx=DB.units.indexOf(name);
+  if(idx===-1)return;
   var removed=DB.units[idx];
+  var usedBy=DB.categories.filter(function(c){return c.unit===removed;}).map(function(c){return c.name;});
+  var activeUse=DB.orders.filter(function(o){return !o.archived && (o.items||[]).some(function(it){return it.unit===removed;});}).length;
+  if((usedBy.length||activeUse) && !confirm('"'+removed+'" is still used'+(usedBy.length?' by: '+usedBy.join(', '):'')+(activeUse?(usedBy.length?' and ':' by ')+activeUse+' active order(s)':'')+'.\n\nRemove it from the list anyway? (Existing orders keep their unit.)'))return;
   DB.units.splice(idx,1);
   saveDB(DB);
   renderUnitMgrBody();
