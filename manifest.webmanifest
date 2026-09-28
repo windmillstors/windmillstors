@@ -2,7 +2,7 @@
   "name": "Windmill Orders — Branch Order Requests",
   "short_name": "Windmill Orders",
   "description": "Branch order requests & dispatch for Windmill Cafe & Roastery",
-  "id": "./",
+  "id": "windmill-orders",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
