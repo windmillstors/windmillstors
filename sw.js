@@ -1,7 +1,7 @@
 /* Windmill Orders — service worker
    Makes the dashboard installable and lets it open without signal.
    Order data itself always comes live from Firebase (never cached here). */
-const CACHE = 'windmill-orders-v3';
+const CACHE = 'windmill-orders-v5';
 const SHELL = ['./', './index.html', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png', './icons/favicon-64.png'];
 

@@ -859,6 +859,77 @@ body.role-admin #app{margin-left:var(--rail);}
 .load-bar span{display:block;width:40%;height:100%;border-radius:4px;background:#e3a54f;animation:loadbar 1.2s ease-in-out infinite;}
 @keyframes loadbar{0%{transform:translateX(-100%)}100%{transform:translateX(260%)}}
 @media (prefers-reduced-motion:reduce){.load-logo,.load-bar span{animation:none;}}
+
+/* ── phone: Main Branch board as one comfortable list with status tabs ── */
+@media(max-width:760px){
+  .pg-head{margin-bottom:12px;gap:10px;}
+  .pg-head h1{font-size:22px;}
+  .pg-sub{font-size:12px;}
+  .hd-tools{flex-wrap:nowrap;gap:6px;}
+  .hd-tools .btn .t{display:none;}
+  .hd-tools .btn{width:44px;height:44px;padding:0;justify-content:center;flex:none;}
+  .srch input{height:44px;font-size:16px;}
+  .bd-chips{margin:0 -14px 10px;padding:0 14px 2px;}
+  .bd-bar{margin-bottom:10px;}
+  .seg{width:100%;}
+  .seg button{flex:1;padding:9px 10px;font-size:13px;}
+  /* status tabs: equal width, sticky under the top bar */
+  .col-jump{position:sticky;top:58px;z-index:40;display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:0 -14px 12px;padding:8px 14px;background:var(--paper);overflow:visible;box-shadow:0 8px 12px -12px rgba(0,0,0,.35);}
+  .col-jump button{flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:7px 2px 6px;border-radius:12px;min-height:54px;position:relative;}
+  .col-jump button i{position:absolute;top:5px;left:50%;transform:translateX(-50%);width:22px;height:3px;border-radius:3px;}
+  .col-jump .jt{font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;color:var(--muted);}
+  .col-jump .jn{font-size:18px;font-weight:800;line-height:1.1;color:var(--ink);}
+  .col-jump button.on{background:var(--esp);border-color:var(--esp);}
+  .col-jump button.on .jt{color:#d9cdbd;} .col-jump button.on .jn{color:#fff;}
+  /* one list at a time, full width, normal page scrolling */
+  .board{display:block!important;margin:0!important;padding:0!important;overflow:visible!important;}
+  .col{display:none!important;}
+  .col.mob-on{display:flex!important;background:none;padding:0;min-height:0;gap:10px;}
+  .col.mob-on .colh{padding:0 2px;min-height:26px;}
+  .col.mob-on .colh>i,.col.mob-on .colh .c{display:none;}
+  .col.mob-on .colh{font-size:15px;}
+  /* bigger, easier tickets */
+  .cc-order{border-radius:16px;}
+  .cc-order-head{padding:14px 14px 13px;}
+  .tk-bn{font-size:15px;}
+  .tk-id{font-size:11px;}
+  .tk-items{font-size:13.5px;line-height:1.65;}
+  .tk-items b{font-size:12.5px;}
+  .tag{font-size:11.5px;padding:4px 8px;}
+  .tk-act .btn{padding:10px 16px;font-size:13.5px;border-radius:11px;min-height:42px;}
+  .colh .mini{padding:8px 12px;font-size:12px;}
+  .col-empty{padding:34px 14px;font-size:13px;}
+  /* report table: swipe sideways instead of squashed columns */
+  .rtable{min-width:760px;}
+  .rtable th,.rtable td{white-space:nowrap;}
+}
+
+/* ── big order window (laptop / desktop) ── */
+.ov-modal{max-width:780px;width:100%;max-height:90vh;overflow:auto;padding:0!important;}
+.ov-top{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:10px;padding:14px 18px;background:var(--card);border-bottom:1px solid var(--line);}
+.ov-meta{font-size:13px;font-weight:700;color:var(--muted);}
+.ov-x{margin-left:auto;width:38px;height:38px;border-radius:11px;border:1px solid var(--line);background:var(--card);font-size:16px;cursor:pointer;color:var(--ink2);}
+.ov-x:hover{background:var(--paper2);}
+.ov-wrap .cc-order{box-shadow:none;border-radius:0;background:none;}
+.ov-wrap .cc-order.urg::before{width:5px;}
+.ov-wrap .cc-order-head{cursor:default;padding:20px 24px 16px;}
+.ov-wrap .cc-order-head:hover{background:none;}
+.ov-wrap .tk-bn{font-size:21px;}
+.ov-wrap .tk-id{font-size:13px;}
+.ov-wrap .tk-age{font-size:14px;}
+.ov-wrap .tk-items{display:none;}
+.ov-wrap .tk-foot{margin-top:12px;}
+.ov-wrap .tag{font-size:12px;padding:5px 9px;}
+.ov-wrap .tk-act .btn{padding:11px 18px;font-size:14px;border-radius:12px;}
+.ov-wrap .cc-order-body{display:block!important;background:none;border-top:1px solid var(--line);padding:16px 24px 24px;}
+.ov-wrap .tk-cat{font-size:12px;margin:14px 0 4px;}
+.ov-wrap .tk-row{font-size:15.5px;padding:10px 2px;}
+.ov-wrap .tk-row b{font-size:15px;}
+.ov-wrap .tk-row small{font-size:12.5px;}
+.ov-wrap .tk-note{font-size:14px;}
+.ov-wrap .cc-actions{margin-top:18px;gap:8px;}
+.ov-wrap .cc-actions .btn{padding:10px 14px;font-size:13.5px;}
+@media(max-width:760px){ #orderViewModal{display:none!important;} }
 </style>
 </head>
 <body>
@@ -890,6 +961,10 @@ body.role-admin #app{margin-left:var(--rail);}
 <nav id="bnav" aria-label="Branch navigation"></nav>
 
 <!-- LOGIN MODAL (branch or admin) -->
+<!-- ORDER VIEW (laptop / desktop: open a branch order full size) -->
+<div class="modal-bg" id="orderViewModal" onclick="if(event.target===this)closeOrderView()">
+  <div class="modal ov-modal" role="dialog" aria-modal="true" aria-label="Order details"><div id="ovBody"></div></div>
+</div>
 <div class="modal-bg" id="loginModal">
   <div class="modal">
     <div class="modal-head">
@@ -1385,6 +1460,14 @@ var adminReqSearchQuery = '';
 var ccBranchFilter = 'All';
 var ccStatusFilter = 'All';
 var ccTodayOnly = false;
+var ccMobCol = 'Pending'; /* phone: which status list is showing */
+function setMobCol(k){
+  ccMobCol=k;
+  document.querySelectorAll('.col-jump button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-k')===k);});
+  document.querySelectorAll('.board .col').forEach(function(c){c.classList.toggle('mob-on',c.id==='col-'+k);});
+  if(window.innerWidth>760){ var el=document.getElementById('col-'+k); if(el)el.scrollIntoView({behavior:'smooth',block:'nearest',inline:'start'}); }
+  else { var j=document.querySelector('.col-jump'); if(j && j.getBoundingClientRect().top<60) window.scrollTo({top:window.scrollY+j.getBoundingClientRect().top-58,behavior:'smooth'}); }
+}
 var ccSearchQuery = '';
 var ccBulkMode = false;
 var ccSelectedIds = {};
@@ -1755,6 +1838,7 @@ function renderAdmin(){
   }
   updateNotifBtn();
   restoreFocus(foc);
+  if(ovOrderId) renderOrderView(); // keep the big order window live
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -1828,7 +1912,7 @@ function buildControlCenter(){
   }else{
     var jump='<div class="col-jump">'+BOARD_COLS.map(function(c){
       var n=scoped.filter(function(o){return c.sts.indexOf(o.status)!==-1 && match(o);}).length;
-      return '<button onclick="var el=document.getElementById(\'col-'+c.key+'\');if(el)el.scrollIntoView({behavior:\'smooth\',block:\'nearest\',inline:\'start\'})"><i style="background:'+c.color+'"></i>'+c.title+' '+n+'</button>';
+      return '<button data-k="'+c.key+'" class="'+(ccMobCol===c.key?'on':'')+'" onclick="setMobCol(\''+c.key+'\')"><i style="background:'+c.color+'"></i><span class="jt">'+c.title+'</span><span class="jn">'+n+'</span></button>';
     }).join('')+'</div>';
     bodyHtml=jump+'<div class="board">'+BOARD_COLS.map(function(c){
       var list=scoped.filter(function(o){return c.sts.indexOf(o.status)!==-1 && match(o);});
@@ -1840,7 +1924,7 @@ function buildControlCenter(){
       var side=c.hint?'<span class="hint">'+c.hint+'</span>':'';
       if(c.key==='Received' && list.length) side='<button class="mini" onclick="archiveDoneOrders()">📦 Archive all</button>';
       var empty={Pending:'No new requests 🎉',Processing:'Nothing being packed',Sent:'Nothing on the road',Received:'Delivered orders show here'}[c.key];
-      return '<div class="col" id="col-'+c.key+'"><div class="colh"><i style="background:'+c.color+'"></i>'+c.title+'<span class="c">'+list.length+'</span>'+side+'</div>'
+      return '<div class="col'+(ccMobCol===c.key?' mob-on':'')+'" id="col-'+c.key+'"><div class="colh"><i style="background:'+c.color+'"></i>'+c.title+'<span class="c">'+list.length+'</span>'+side+'</div>'
         +(list.length?list.map(renderOrderRow).join(''):'<div class="col-empty">'+(q||ccTodayOnly?'No match':empty)+'</div>')
       +'</div>';
     }).join('')+'</div>';
@@ -1970,9 +2054,34 @@ function renderOrderRow(o){
   +'</div>';
 }
 function toggleOrderExpand(id){
+  /* On a laptop / desktop the Main Branch opens the order full size
+     in a big window; on a phone it still opens inside the card. */
+  if(session && session.role==='admin' && window.innerWidth>760){ openOrderView(id); return; }
   expandedOrders[id]=!expandedOrders[id];
   renderAdmin();
 }
+var ovOrderId=null;
+function openOrderView(id){ ovOrderId=id; renderOrderView(); openModal('orderViewModal'); }
+function closeOrderView(){ ovOrderId=null; closeModal('orderViewModal'); }
+function renderOrderView(){
+  if(!ovOrderId)return;
+  var o=DB.orders.find(function(x){return x.id===ovOrderId;});
+  if(!o){ closeOrderView(); return; }
+  var was=expandedOrders[o.id], wasBulk=ccBulkMode;
+  expandedOrders[o.id]=true; ccBulkMode=false;
+  var card=renderOrderRow(o);
+  expandedOrders[o.id]=was; ccBulkMode=wasBulk;
+  card=card.replace(/toggleOrderExpand\(/g,'void(');
+  var b=getBranch(o.branchId);
+  var d=new Date(o.ts);
+  document.getElementById('ovBody').innerHTML=
+    '<div class="ov-top"><span class="status-badge status-'+esc(o.status)+'">'+esc((typeof STATUS_LABEL!=='undefined'&&STATUS_LABEL[o.status])||o.status)+'</span>'
+    +(o.archived?'<span class="tag">Archived</span>':'')
+    +'<span class="ov-meta">'+esc(b?b.name:'')+' · '+o.items.length+' item'+(o.items.length!==1?'s':'')+'</span>'
+    +'<button class="ov-x" onclick="closeOrderView()" aria-label="Close">✕</button></div>'
+    +'<div class="ov-wrap">'+card+'</div>';
+}
+document.addEventListener('keydown',function(e){ if(e.key==='Escape' && ovOrderId) closeOrderView(); });
 
 /* ══════════════════════════════════════════════════════════
    BRANCH
